@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Adds the local model to the coding agents' own configs, so that `opencode`,
+# `pi` and `codex` can use it without the launchers, and removes it again.
+#
+#   ./bin/integrate install [AGENT...]    default: opencode and pi if installed,
+#                                         and codex if CODEX_BASE_URL is set
+#   ./bin/integrate uninstall [AGENT...]  default: opencode pi codex
+#   ./bin/integrate status
+#
+# AGENT is opencode, pi or codex. Only a provider called "puny" is added;
+# nothing else in your configs changes, and uninstalling restores each file
+# exactly. lib/integrate.py explains where each agent's config lives.
+#
+# The config records the server address, context window and reply limit at
+# install time. The window is the one ./bin/serve-qwen will advertise for the
+# same settings (QWEN_PRESET, QWEN_CONTEXT and the rest): the model card's,
+# or less when that does not fit in the memory the GPU may use. So the model
+# must be downloaded first. Codex also needs CODEX_BASE_URL, a proxy that
+# serves the Responses API. Run install again after changing any of them.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+agents=("$@")
+
+case "$command" in
+  install)
+    if [[ ${#agents[@]} -eq 0 ]]; then
+      for agent in opencode pi; do
+        if command -v "$agent" >/dev/null 2>&1; then
+          agents+=("$agent")
+        else
+          echo "$agent: skipped, not installed ($PUNY_ROOT/bin/setup $agent installs it)"
+        fi
+      done
+      if [[ -n "${CODEX_BASE_URL:-}" ]]; then
+        agents+=(codex)
+      else
+        echo "codex: skipped, needs CODEX_BASE_URL (a Responses API proxy; see docs/compatibility.md)"
+      fi
+      [[ ${#agents[@]} -gt 0 ]] || die "no coding agent to set up; install one with $PUNY_ROOT/bin/setup opencode pi"
+    fi
+    # The same window the server will advertise, worked out the same way.
+    resolve_model_settings
+    model_dir="$(model_dir_for "$QWEN_REPO" "$QWEN_REVISION")"
+    [[ -f "$model_dir/.verified" ]] \
+      || die "$QWEN_REPO is not downloaded yet, and the context window the agents are told depends on it. Download it first: $PUNY_ROOT/bin/setup ${QWEN_PRESET:-kat} (or start $PUNY_ROOT/bin/serve-qwen once for QWEN_REPO)"
+    mlx_env_ready || die "the mlx-lm environment is not installed; run $PUNY_ROOT/bin/setup mlx"
+    guard_args
+    window="$("$MLX_ENV_DIR/bin/python" -I "$PUNY_ROOT/lib/serve.py" "${guard[@]}" --print-window)"
+    [[ "$window" =~ ^[1-9][0-9]*$ ]] || die "could not work out the context window (got '$window')"
+    QWEN_CONTEXT="$window"
+    ;;
+  uninstall | status)
+    [[ ${#agents[@]} -gt 0 ]] || agents=(opencode pi codex)
+    ;;
+  *) die "usage: $PUNY_ROOT/bin/integrate install|uninstall|status [opencode] [pi] [codex]" ;;
+esac
+
+uses_opencode=0
+for agent in "${agents[@]}"; do
+  [[ "$agent" == opencode ]] && uses_opencode=1
+done
+if [[ "$command" == install && $uses_opencode == 1 ]]; then
+  require_opencode_2
+fi
+
+status=0
+output="$(PUNY_BASE_URL="$MLX_BASE_URL" PUNY_CONTEXT="$QWEN_CONTEXT" PUNY_MAX_OUTPUT="$QWEN_MAX_OUTPUT" \
+  PUNY_CODEX_BASE_URL="${CODEX_BASE_URL:-}" PUNY_STATE_DIR="$PUNY_ROOT/state" \
+  python3 -I "$PUNY_ROOT/lib/integrate.py" "$command" "${agents[@]}")" || status=$?
+[[ -z "$output" ]] || printf '%s\n' "$output"
+
+# OpenCode's background service reads its config when first used and keeps it
+# until it restarts. Restarting it ends the sessions running in it, so that is
+# left to you; this only says when it is needed.
+if [[ "$output" =~ (^|$'\n')"opencode: "(added|removed|deleted) ]]; then
+  if service="$(opencode service status 2>&1)"; then
+    if [[ "$service" != stopped ]]; then
+      echo "opencode: the background service is running ($service) and may still use the old config."
+      echo "          Restart it when no session needs it: opencode service restart"
+    fi
+  else
+    echo "opencode: could not check the background service ($service). If it is running, restart it"
+    echo "          when no session needs it: opencode service restart"
+  fi
+fi
+exit "$status"

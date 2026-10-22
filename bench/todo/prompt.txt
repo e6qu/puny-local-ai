@@ -1,0 +1,6 @@
+Add two features to the todo command-line tool in the todo/ package:
+
+1. A "done ID" command. It marks the item with that ID as done, saves the file, and prints "done ID". If no item has that ID, it prints "no item ID" to standard error, changes nothing, and main returns 1.
+2. "list" shows each item as "ID. [x] TEXT" when it is done and "ID. [ ] TEXT" when it is not. A new "list --pending" option shows only the items that are not done.
+
+Items saved before this change have no done field; treat them as not done. Update tests/test_cli.py for the new list format and add tests for the new behaviour. Run python3 -m unittest to check your work.

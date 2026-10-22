@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Starts OpenCode (v2) on the local MLX model. The provider config is passed
+# through OPENCODE_CONFIG_CONTENT, which OpenCode merges over your global
+# config, so ~/.config/opencode stays untouched. It only takes effect with
+# --standalone: the shared background service never sees this environment.
+#
+#   ./bin/opencode-qwen              full-screen interface
+#   ./bin/opencode-qwen run "task"   one non-interactive task
+#   ./bin/opencode-qwen models       list models, to confirm puny/qwen-local loads
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+require_opencode_2
+require_mlx_server
+load_served_context
+
+# Assigned before export: `export X="$(cmd)"` would hide a failure of cmd.
+OPENCODE_CONFIG_CONTENT="$(
+  PUNY_BASE_URL="$MLX_BASE_URL" PUNY_CONTEXT="$QWEN_CONTEXT" PUNY_MAX_OUTPUT="$QWEN_MAX_OUTPUT" \
+    python3 -I "$PUNY_ROOT/lib/integrate.py" config opencode
+)"
+export OPENCODE_CONFIG_CONTENT
+
+if [[ $# -gt 0 && "$1" != -* ]]; then
+  subcommand="$1"
+  shift
+  exec opencode "$subcommand" --standalone "$@"
+fi
+exec opencode --standalone "$@"

@@ -1,0 +1,5 @@
+# Scripts find lib/ relative to themselves; let ShellCheck follow them there.
+external-sources=true
+source-path=SCRIPTDIR/../lib
+# Embedded Python is passed in single quotes on purpose.
+disable=SC2016

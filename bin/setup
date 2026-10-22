@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Installs what you pick: the mlx-lm environment, any of the pinned models,
+# and the OpenCode and Pi agents. Everything is downloaded at pinned versions
+# and checked against hashes; nothing is vendored in this repo.
+#
+#   ./bin/setup                      menu
+#   ./bin/setup mlx kat opencode pi  the named items, no questions
+#
+# Items: mlx, the model presets (kat, reap, small), opencode, pi.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+ITEMS=(mlx "${MODEL_PRESETS[@]}" opencode pi)
+DEFAULT_ITEMS=(mlx kat opencode pi)
+
+describe() {
+  case "$1" in
+    mlx) echo "mlx-lm 0.32.2 and its dependencies, from lib/mlx-lm.lock" ;;
+    opencode) echo "OpenCode coding agent" ;;
+    pi) echo "Pi coding agent" ;;
+    *) preset_info "$1"; echo "model: $preset_about" ;;
+  esac
+}
+
+status() {
+  local version
+  case "$1" in
+    mlx) if mlx_env_ready; then echo "installed"; else echo "not installed"; fi ;;
+    opencode | pi)
+      version="$(installed_version "$1")"
+      if [[ -n "$version" ]]; then echo "installed $version"; else echo "not installed"; fi
+      ;;
+    *)
+      preset_info "$1"
+      if [[ -f "$(model_dir_for "$preset_repo" "$preset_revision")/.verified" ]]; then
+        echo "downloaded and verified"
+      else
+        echo "not downloaded"
+      fi
+      ;;
+  esac
+}
+
+# Installs one item. Runs as its own process (see the loop below), so set -e
+# stops that item at its first failed step.
+install_one() {
+  case "$1" in
+    mlx) ensure_mlx_env ;;
+    opencode | pi) "$PUNY_ROOT/bin/install-agents" "$1" ;;
+    *)
+      preset_info "$1"
+      ensure_model "$preset_repo" "$preset_revision"
+      ;;
+  esac
+}
+
+if [[ "${1:-}" == --one ]]; then
+  [[ $# -eq 2 ]] || die "usage: $PUNY_ROOT/bin/setup --one ITEM"
+  install_one "$2"
+  exit
+fi
+
+valid=" ${ITEMS[*]} "
+chosen=("$@")
+if [[ ${#chosen[@]} -eq 0 ]]; then
+  [[ -t 0 ]] || die "no items given and no terminal for the menu; usage: $PUNY_ROOT/bin/setup ${ITEMS[*]}"
+  echo "What should be installed?"
+  for i in "${!ITEMS[@]}"; do
+    printf '  %d) %-9s %s [%s]\n' $((i + 1)) "${ITEMS[$i]}" "$(describe "${ITEMS[$i]}")" "$(status "${ITEMS[$i]}")"
+  done
+  defaults=()
+  for item in "${DEFAULT_ITEMS[@]}"; do
+    for i in "${!ITEMS[@]}"; do
+      [[ "${ITEMS[$i]}" == "$item" ]] && defaults+=($((i + 1)))
+    done
+  done
+  read -r -p "Numbers separated by spaces [${defaults[*]}]: " answer
+  read -r -a numbers <<< "${answer:-${defaults[*]}}"
+  for n in "${numbers[@]}"; do
+    if [[ ! "$n" =~ ^[1-9][0-9]*$ ]] || (( n > ${#ITEMS[@]} )); then
+      die "'$n' is not a number from 1 to ${#ITEMS[@]}"
+    fi
+    chosen+=("${ITEMS[$((n - 1))]}")
+  done
+fi
+for item in "${chosen[@]}"; do
+  [[ "$valid" == *" $item "* ]] || die "unknown item '$item'; expected one of: ${ITEMS[*]}"
+done
+
+failed=()
+for item in "${chosen[@]}"; do
+  echo "== $item"
+  "$0" --one "$item" || failed+=("$item")
+done
+
+echo
+for item in "${ITEMS[@]}"; do
+  printf '%-9s %s\n' "$item" "$(status "$item")"
+done
+if [[ ${#failed[@]} -gt 0 ]]; then
+  die "failed: ${failed[*]}"
+fi

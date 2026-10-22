@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Starts the Pi coding agent on the local MLX model. Pi reads models.json only
+# from its agent directory, so this launcher gives Pi its own directory under
+# state/pi-agent (sessions included) and leaves ~/.pi/agent untouched.
+# Extra arguments go to pi, e.g. ./bin/pi-qwen -p "task" for one task.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+require_command pi "Install it with: $PUNY_ROOT/bin/setup pi"
+require_mlx_server
+load_served_context
+
+export PI_CODING_AGENT_DIR="$PUNY_ROOT/state/pi-agent"
+mkdir -p "$PI_CODING_AGENT_DIR"
+
+# Assigned first: a failure inside $(...) would otherwise be lost.
+config="$(
+  PUNY_BASE_URL="$MLX_BASE_URL" PUNY_CONTEXT="$QWEN_CONTEXT" PUNY_MAX_OUTPUT="$QWEN_MAX_OUTPUT" \
+    python3 -I "$PUNY_ROOT/lib/integrate.py" config pi
+)"
+printf '%s\n' "$config" > "$PI_CODING_AGENT_DIR/models.json"
+
+exec pi --provider puny --model "$MLX_MODEL" "$@"

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Runs the test suite.
+#
+#   ./tests/run                 fast tests: no network, no model, no real agents
+#   ./tests/run --live          also the live tests: real Hugging Face, the small
+#                             model on a real server, and the real agents in a
+#                             sandboxed home folder (needs ./bin/setup mlx small
+#                             opencode pi, and about 6 GiB of free memory)
+#   ./tests/run [--live] NAME   only tests whose id contains NAME
+#
+# Tests run the scripts from a temporary copy of the repo with their own home
+# folder, so they never touch your agent configs, state/ or ~/.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+
+live=0
+if [[ "${1:-}" == --live ]]; then
+  live=1
+  shift
+fi
+# bash 3.2, which macOS ships, treats an empty "${array[@]}" as unset.
+filter=(-v)
+if [[ $# -gt 0 ]]; then
+  [[ $# -eq 1 && "$1" != -* ]] || die "usage: $PUNY_ROOT/tests/run [--live] [NAME]"
+  filter+=(-k "$1")
+fi
+
+# The serve tests import mlx, so everything runs in the mlx-lm environment.
+ensure_mlx_env
+find "$PUNY_ROOT/tests" "$PUNY_ROOT/lib" -name __pycache__ -prune -exec rm -rf {} +
+# Empty input for the whole run, so no program a test starts waits on the
+# terminal; codex exec, for one, reads extra prompt text from stdin.
+PUNY_LIVE_TESTS="$live" PYTHONDONTWRITEBYTECODE=1 \
+  "$mlx_python" -m unittest discover -s "$PUNY_ROOT/tests" -t "$PUNY_ROOT/tests" "${filter[@]}" < /dev/null

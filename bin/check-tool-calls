@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Checks that the MLX server returns a structured tool call, which coding
+# agents need to edit files and run commands. A plain chat reply is not enough.
+# Exits non-zero, with the server's reply, when no get_version call comes back.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+require_mlx_server
+
+
+request="$(MLX_MODEL="$MLX_MODEL" python3 -I -c '
+import json, os
+print(json.dumps({
+    "model": os.environ["MLX_MODEL"],
+    "messages": [{"role": "user", "content": "Call the get_version tool now."}],
+    "tools": [{
+        "type": "function",
+        "function": {
+            "name": "get_version",
+            "description": "Return the application version",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    }],
+    "tool_choice": "auto",
+    "max_tokens": 256,
+}))
+')"
+
+reply="$(curl -sS -m 300 "$MLX_BASE_URL/chat/completions" \
+  -H 'Content-Type: application/json' -d "$request")" \
+  || die "POST $MLX_BASE_URL/chat/completions failed"
+
+REPLY="$reply" python3 -I -c '
+import json, os, sys
+raw = os.environ["REPLY"]
+try:
+    message = json.loads(raw)["choices"][0]["message"]
+except (ValueError, KeyError, IndexError, TypeError):
+    sys.exit("FAIL: the reply is not a chat completion:\n" + raw)
+calls = message.get("tool_calls") or []
+names = [c.get("function", {}).get("name") for c in calls]
+if "get_version" in names:
+    print("OK: the model called get_version through tool_calls.")
+    sys.exit(0)
+print("FAIL: no get_version entry in choices[0].message.tool_calls.", file=sys.stderr)
+print("If the call appears as text in content, the server is not parsing this model\x27s tool-call format.", file=sys.stderr)
+print(json.dumps(message, indent=2), file=sys.stderr)
+sys.exit(1)
+'

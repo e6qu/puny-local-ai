@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Checks whether an endpoint implements the OpenAI Responses API, which Codex
+# needs. Checks MLX_BASE_URL by default; pass another base URL (for example a
+# proxy in front of MLX) as the first argument.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+base="${1:-$MLX_BASE_URL}"
+if [[ $# -eq 0 ]]; then
+  require_mlx_server
+fi
+require_responses_api "$base"
+echo "OK: $base/responses returned a Responses API object."

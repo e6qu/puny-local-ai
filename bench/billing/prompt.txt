@@ -1,0 +1,1 @@
+In this project, rename the function calc_tax to compute_tax everywhere. Also change its rate argument from a fraction (0.2 means 20%) to a percentage (20 means 20%). Update every caller, constant, docstring and test so that all results stay exactly the same. No mention of calc_tax may remain. Run python3 -m unittest to check your work.

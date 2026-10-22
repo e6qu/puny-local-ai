@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Runs mlx_lm.server in the foreground at MLX_BASE_URL, after downloading and
+# verifying the model if ./bin/setup has not. lib/serve.py guards it: it refuses
+# to start when the model will not fit in memory or the disk is nearly full,
+# rejects requests that would not fit, and stops the server before macOS runs
+# out of memory. Keep one server running and point every agent at it; two
+# copies of the model do not fit in a 24 GiB Mac.
+#
+# Settings (environment variables, all optional):
+#   QWEN_PRESET               Which pinned model to serve: kat (default),
+#                             reap or small. lib/mlx.sh has the details.
+#   QWEN_REPO, QWEN_REVISION  Any other Hugging Face model and the exact
+#                             commit to serve; set both, instead of a preset.
+#   QWEN_KV_BITS              Context-cache quantization bits, 8 (default)
+#                             or 4. A quantized cache makes the server take
+#                             one request at a time, which the memory guard
+#                             relies on.
+#   QWEN_CONTEXT              Context window in tokens. Defaults to what the
+#                             preset's model card states (262144 for all
+#                             three); required with QWEN_REPO. lib/serve.py
+#                             records the part of it that fits in memory in
+#                             state/served/, and the agents are told that.
+#   QWEN_PROMPT_CACHE_ENTRIES Most conversations whose context cache the
+#                             server keeps for reuse (default 0, because
+#                             agents never reuse them; see docs/models.md).
+#                             The memory check budgets each at the full
+#                             QWEN_CONTEXT.
+#   QWEN_TEMP                 Sampling temperature. Defaults to 0.8 for kat,
+#                             which passed 12 of 12 benchmark runs at 0.8,
+#                             and to 0.6 for every other model.
+#   QWEN_PREFILL_STEP         The most prompt tokens processed per step
+#                             (default 512). Each request uses the largest
+#                             step up to this that fits in memory; long
+#                             prompts get smaller steps.
+#   QWEN_MEMORY_MARGIN        Headroom for the server's memory outside MLX,
+#                             such as Python and the tokenizer (default 512M).
+#   QWEN_MAX_OUTPUT, MLX_BASE_URL: see lib/common.sh.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+
+resolve_model_settings
+
+busy="$(listener_pid "$MLX_PORT")"
+[[ -z "$busy" ]] \
+  || die "port $MLX_PORT is already in use by $(ps -p "$busy" -o comm= || echo "an unknown program") (pid $busy). Stop it, or set MLX_BASE_URL to a free port."
+
+ensure_model "$QWEN_REPO" "$QWEN_REVISION"
+
+guard_args
+args=(
+  --host "$MLX_HOST" --port "$MLX_PORT"
+  --max-tokens "$QWEN_MAX_OUTPUT"
+  # Qwen3.6 model card, "thinking mode for precise coding tasks", apart from
+  # the temperature, which is per preset (see QWEN_TEMP).
+  --temp "$QWEN_TEMP" --top-p 0.95 --top-k 20 --min-p 0.0
+)
+
+echo "Starting $QWEN_REPO at temperature $QWEN_TEMP at $MLX_BASE_URL (clients send the model name default_model)"
+exec "$mlx_python" -I "$PUNY_ROOT/lib/serve.py" "${guard[@]}" -- "${args[@]}"

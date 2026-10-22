@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# End-to-end check against the running MLX server: the raw tool-call check,
+# then each agent must create a file through its own tools in a fresh folder.
+# Exits non-zero if any step fails, and says which.
+#
+# The folders live in the system temp directory, outside this repo: OpenCode
+# snapshots the whole enclosing git project before it starts, and here that
+# would include the multi-gigabyte models under state/. OpenCode also gets its
+# own throwaway data folder, so test runs neither wait on nor land in your
+# real session database.
+#
+# SMOKE_TIMEOUT caps each agent's run in seconds (default 300).
+#
+#   ./bin/smoke-test                 OpenCode and Pi
+#   ./bin/smoke-test opencode        one agent
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+require_mlx_server
+
+bin="$PUNY_ROOT/bin"
+SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-300}"
+[[ "$SMOKE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die "SMOKE_TIMEOUT must be a positive whole number of seconds"
+agents=("$@")
+[[ ${#agents[@]} -gt 0 ]] || agents=(opencode pi)
+for agent in "${agents[@]}"; do
+  [[ "$agent" == opencode || "$agent" == pi ]] || die "unknown agent '$agent'; expected opencode or pi"
+done
+
+prompt_for() {
+  printf 'Create a file named hello.txt in the current directory. Its entire content must be the single line: hello from %s' "$1"
+}
+
+failed=()
+
+echo "== raw tool call"
+if ! "$bin/check-tool-calls"; then
+  failed+=("raw tool call")
+fi
+
+for agent in "${agents[@]}"; do
+  run="$(mktemp -d "${TMPDIR:-/tmp}/puny-smoke-$agent.XXXXXX")"
+  work="$run/work"
+  mkdir -p "$work" "$run/data"
+  echo "== $agent (in $work)"
+  started=$SECONDS
+  # Each agent runs as its own process, so set -e stays in force inside it.
+  log="$run/agent.log"
+  status=0
+  (cd "$work" && run_agent "$agent" "$run/data" "$SMOKE_TIMEOUT" "$(prompt_for "$agent")") > "$log" 2>&1 || status=$?
+  if [[ $status -eq 142 ]]; then
+    echo "FAIL: $agent did not finish within ${SMOKE_TIMEOUT}s; see $log"
+    failed+=("$agent")
+    continue
+  elif [[ $status -ne 0 ]]; then
+    echo "FAIL: $agent exited with status $status; see $log"
+    failed+=("$agent")
+    continue
+  fi
+  expected="hello from $agent"
+  if [[ ! -f "$work/hello.txt" ]]; then
+    echo "FAIL: $agent did not create hello.txt; see $log"
+    failed+=("$agent")
+  elif [[ "$(<"$work/hello.txt")" != "$expected" ]]; then
+    echo "FAIL: $agent wrote '$(<"$work/hello.txt")', expected '$expected'"
+    failed+=("$agent")
+  else
+    echo "OK: $agent created hello.txt through its tools in $((SECONDS - started))s."
+    rm -rf "$run"
+  fi
+done
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+  die "failed: ${failed[*]}"
+fi
+echo "All smoke tests passed."

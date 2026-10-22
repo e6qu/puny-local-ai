@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Installs the pinned agent versions. Refuses any version published less than
+# 24 hours ago, so a broken or compromised release has time to be pulled.
+# Set ALLOW_FRESH_RELEASE=1 only for a release that fixes a reported
+# security advisory.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+# Pi 1.3.0 declares node >=22.19.0.
+require_command npm "Install Node 22.19 or newer: brew install node"
+node_version="$(node --version)"
+[[ "$node_version" =~ ^v([0-9]+)\.([0-9]+)\. ]] || die "cannot read the Node version from '$node_version'"
+(( BASH_REMATCH[1] > 22 || (BASH_REMATCH[1] == 22 && BASH_REMATCH[2] >= 19) )) \
+  || die "Node $node_version is too old; Pi needs 22.19 or newer: brew upgrade node"
+require_free_disk 6 "$(npm root -g)" "Installing the coding agents"
+
+# Exits unless npm package $1 at version $2 was published 24+ hours ago.
+require_quarantine_passed() {
+  local published
+  published="$(npm view "$1@$2" time --json)" || die "cannot read the publish time of $1@$2 from npm"
+  PUBLISHED="$published" VERSION="$2" PACKAGE="$1" ALLOW="${ALLOW_FRESH_RELEASE:-}" python3 -I -c '
+import datetime, json, os, sys
+e = os.environ
+times = json.loads(e["PUBLISHED"])
+if e["VERSION"] not in times:
+    sys.exit("error: npm lists no publish time for " + e["PACKAGE"] + "@" + e["VERSION"])
+stamp = times[e["VERSION"]]
+published = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+ready = published + datetime.timedelta(hours=24)
+now = datetime.datetime.now(datetime.timezone.utc)
+name = e["PACKAGE"] + "@" + e["VERSION"]
+if now < ready and e["ALLOW"] != "1":
+    sys.exit(f"error: {name} was published {stamp}; it can be installed after {ready:%Y-%m-%d %H:%M} UTC.")
+'
+}
+
+# Exits unless command $1 now reports version $2. An existing OpenCode upgrades
+# itself through whatever installed it, so the result is checked, not assumed.
+require_installed() {
+  local found
+  found="$(installed_version "$1")"
+  [[ "$found" == "$2" ]] \
+    || die "$1 reports version '${found:-none}' after installing $2. Another $1 may come first on PATH: $(command -v "$1" || echo "not found")"
+}
+
+install_opencode() {
+  if [[ "$(installed_version opencode)" == "$OPENCODE_VERSION" ]]; then
+    echo "OpenCode $OPENCODE_VERSION is already installed."
+    return
+  fi
+  require_quarantine_passed "$OPENCODE_PACKAGE" "$OPENCODE_VERSION"
+  # An existing OpenCode, however it was installed, upgrades itself in place;
+  # otherwise the npm package provides the opencode command.
+  if command -v opencode >/dev/null 2>&1; then
+    opencode upgrade "$OPENCODE_VERSION"
+  else
+    npm install -g "$OPENCODE_PACKAGE@$OPENCODE_VERSION"
+  fi
+}
+
+install_pi() {
+  if [[ "$(installed_version pi)" == "$PI_VERSION" ]]; then
+    echo "Pi $PI_VERSION is already installed."
+    return
+  fi
+  require_quarantine_passed "$PI_PACKAGE" "$PI_VERSION"
+  npm install -g "$PI_PACKAGE@$PI_VERSION"
+}
+
+# With an agent name, install just that agent. Bash ignores set -e inside
+# anything tested with || or if, so each agent runs as its own process and a
+# refused step really stops that agent's install.
+[[ $# -le 1 ]] || die "usage: $PUNY_ROOT/bin/install-agents [opencode|pi]"
+case "${1:-}" in
+  opencode) install_opencode; require_installed opencode "$OPENCODE_VERSION"; exit ;;
+  pi) install_pi; require_installed pi "$PI_VERSION"; exit ;;
+  "") ;;
+  *) die "unknown agent '$1'; expected opencode or pi" ;;
+esac
+
+failed=0
+for agent in opencode pi; do
+  "$0" "$agent" || failed=1
+done
+
+echo "OpenCode: $(installed_version opencode) (pinned $OPENCODE_VERSION)"
+echo "Pi:       $(installed_version pi) (pinned $PI_VERSION)"
+exit "$failed"

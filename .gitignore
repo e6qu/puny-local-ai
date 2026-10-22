@@ -1,0 +1,11 @@
+# Downloads and run output: Python, the mlx-lm environment, models, caches,
+# Pi settings, benchmark results and logs. Scripts write only here or to
+# $TMPDIR, apart from the global npm installs ./bin/setup runs and the agent
+# configs ./bin/integrate edits.
+/state/
+
+# Python bytecode from running lib/*.py and the bench tests.
+__pycache__/
+
+# macOS Finder metadata.
+.DS_Store

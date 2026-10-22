@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Prints the license of everything this project downloads, read from the
+# pinned sources: the Python packages installed from lib/mlx-lm.lock, the
+# pinned agent releases on npm, and the model cards at the pinned commits.
+# Output is Markdown tables, ready to paste into THIRD_PARTY.md.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+require_command npm "Install Node 22.19 or newer: brew install node"
+
+mlx_env_ready || die "the mlx-lm environment is not installed; run $PUNY_ROOT/bin/setup mlx"
+
+echo "## Python packages (lib/mlx-lm.lock)"
+echo
+echo "| Package | Version | License |"
+echo "|---|---|---|"
+"$MLX_ENV_DIR/bin/python" -I -c '
+import importlib.metadata as m
+rows = []
+for d in m.distributions():
+    md = d.metadata
+    name = md["Name"]
+    if name == "pip":
+        continue
+    lic = md.get("License-Expression")
+    if not lic:
+        classifiers = [c.split(" :: ")[-1] for c in md.get_all("Classifier") or [] if c.startswith("License ::")]
+        lic = "; ".join(classifiers) or (md.get("License") or "").strip()
+    if not lic:
+        raise SystemExit(f"error: {name} {d.version} declares no license")
+    rows.append((name, d.version, lic))
+for name, version, lic in sorted(rows, key=lambda r: r[0].lower()):
+    print(f"| {name} | {version} | {lic} |")
+'
+
+echo
+echo "## Coding agents (npm)"
+echo
+echo "| Package | Version | License | Source |"
+echo "|---|---|---|---|"
+for spec in "$OPENCODE_PACKAGE@$OPENCODE_VERSION" "$PI_PACKAGE@$PI_VERSION"; do
+  license="$(npm view "$spec" license)"
+  repo="$(npm view "$spec" repository.url)"
+  [[ -n "$repo" ]] || die "$spec declares no repository"
+  [[ -n "$license" ]] || die "$spec declares no license"
+  echo "| ${spec%@*} | ${spec##*@} | $license | ${repo#git+} |"
+done
+
+echo
+echo "## Models (Hugging Face, license from each model card at the pinned commit)"
+echo
+echo "| Preset | Model and commit | License | Converted from | License |"
+echo "|---|---|---|---|---|"
+card_license() {
+  # Prints the license: line of the model card's front matter, or "no model card".
+  local repo="$1" revision="$2" url card status
+  url="${HF_ENDPOINT:-https://huggingface.co}/$repo/raw/$revision/README.md"
+  card="$(curl -sS -w '\n%{http_code}' "$url")" || die "cannot fetch $url"
+  status="${card##*$'\n'}"
+  card="${card%$'\n'*}"
+  if [[ "$status" == 404 ]]; then
+    echo "no model card"
+    return
+  fi
+  [[ "$status" == 200 ]] || die "$url answered HTTP $status"
+  CARD="$card" python3 -I -c '
+import os, re, sys
+card = os.environ["CARD"]
+front = re.match(r"---\n(.*?)\n---", card, re.S)
+match = front and re.search(r"^license:\s*(\S+)", front.group(1), re.M)
+print(match.group(1) if match else "not stated in the model card")
+'
+}
+for preset in "${MODEL_PRESETS[@]}"; do
+  preset_info "$preset"
+  up_repo="${preset_upstream%@*}"
+  up_rev="${preset_upstream#*@}"
+  # Assigned on their own lines, so a failed fetch stops the script instead
+  # of printing an empty cell.
+  license="$(card_license "$preset_repo" "$preset_revision")"
+  up_license="$(card_license "$up_repo" "$up_rev")"
+  echo "| $preset | [$preset_repo@${preset_revision:0:8}](https://huggingface.co/$preset_repo/tree/$preset_revision) | $license | [$up_repo@${up_rev:0:8}](https://huggingface.co/$up_repo/tree/$up_rev) | $up_license |"
+done

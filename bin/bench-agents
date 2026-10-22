@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Compares models on real coding tasks. Each task in bench/ is a small project
+# with a request in prompt.txt; the agent works on a fresh copy, then hidden
+# tests the agent never saw (bench/TASK/hidden) and an optional bench/TASK/check
+# script decide whether it succeeded.
+#
+#   ./bin/bench-agents LABEL     run every task with every agent against the
+#                              running server; LABEL names the model, such as
+#                              reap or kat
+#   ./bin/bench-agents report    summarize every run so far, per label
+#
+# Results go to state/bench/LABEL/results.tsv, with each run's log and final
+# files next to it. Runs happen in the system temp directory, for the reasons
+# given in ./bin/smoke-test.
+#
+# Settings:
+#   BENCH_AGENTS   agents to run, default "opencode pi"
+#   BENCH_TASKS    tasks to run, default every folder in bench/
+#   BENCH_RUNS     runs of each task with each agent, default 1
+#   BENCH_TIMEOUT  seconds per run, default 900
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+results_root="$PUNY_ROOT/state/bench"
+
+report() {
+  shopt -s nullglob
+  local files=("$results_root"/*/results.tsv)
+  [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+  python3 -I - "${files[@]}" <<'EOF'
+import csv, statistics, sys
+from collections import defaultdict
+
+rows = []
+for path in sys.argv[1:]:
+    with open(path) as f:
+        rows += list(csv.DictReader(f, delimiter="\t"))
+
+groups = defaultdict(list)
+for row in rows:
+    groups[(row["label"], row["task"], row["agent"])].append(row)
+
+w = max(len("label"), *(len(r["label"]) for r in rows))
+print(f"{'label':<{w}} {'task':<10} {'agent':<9} {'passed':>7} {'median s':>9}  failures")
+for (label, task, agent), runs in sorted(groups.items()):
+    passed = sum(r["result"] == "pass" for r in runs)
+    median = statistics.median(int(r["seconds"]) for r in runs)
+    failures = ", ".join(r["result"] for r in runs if r["result"] != "pass")
+    print(f"{label:<{w}} {task:<10} {agent:<9} {passed:>3}/{len(runs):<3} {median:>9.0f}  {failures}")
+
+print()
+for label in sorted({r["label"] for r in rows}):
+    mine = [r for r in rows if r["label"] == label]
+    passed = sum(r["result"] == "pass" for r in mine)
+    total_s = sum(int(r["seconds"]) for r in mine)
+    print(f"{label}: {passed}/{len(mine)} passed, {total_s}s in total")
+EOF
+}
+
+[[ $# -eq 1 ]] || die "usage: $PUNY_ROOT/bin/bench-agents LABEL | $PUNY_ROOT/bin/bench-agents report"
+if [[ "$1" == report ]]; then
+  report
+  exit
+fi
+label="$1"
+[[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "LABEL may contain only letters, digits, '.', '_' and '-'"
+
+agents=()
+read -r -a agents <<< "${BENCH_AGENTS:-opencode pi}"
+[[ ${#agents[@]} -gt 0 ]] || die "BENCH_AGENTS names no agent; use opencode, pi or both"
+for agent in "${agents[@]}"; do
+  [[ "$agent" == opencode || "$agent" == pi ]] || die "unknown agent '$agent' in BENCH_AGENTS; expected opencode or pi"
+done
+if [[ -n "${BENCH_TASKS:-}" ]]; then
+  tasks=()
+  read -r -a tasks <<< "$BENCH_TASKS"
+  [[ ${#tasks[@]} -gt 0 ]] || die "BENCH_TASKS names no task"
+else
+  tasks=()
+  for dir in "$PUNY_ROOT"/bench/*/; do
+    tasks+=("$(basename "$dir")")
+  done
+fi
+BENCH_RUNS="${BENCH_RUNS:-1}"
+BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
+[[ "$BENCH_RUNS" =~ ^[1-9][0-9]*$ ]] || die "BENCH_RUNS must be a positive whole number"
+[[ "$BENCH_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die "BENCH_TIMEOUT must be a positive whole number of seconds"
+for task in "${tasks[@]}"; do
+  for part in prompt.txt start hidden; do
+    [[ -e "$PUNY_ROOT/bench/$task/$part" ]] || die "bench/$task/$part is missing"
+  done
+done
+
+require_mlx_server
+
+out="$results_root/$label"
+mkdir -p "$out"
+results="$out/results.tsv"
+[[ -f "$results" ]] || printf 'label\ttask\tagent\trun\tresult\tseconds\n' > "$results"
+# Repeat invocations add runs rather than overwrite earlier ones.
+first_run=$(( $(awk -F'\t' 'NR > 1 && $4 > max { max = $4 } END { print max + 0 }' "$results") + 1 ))
+
+# Copies the hidden tests into the agent's folder, runs the whole test suite
+# and the task's own check, and prints why the run failed, if it did.
+verify() {
+  local task_dir="$1" work="$2"
+  cp "$task_dir"/hidden/* "$work"/ || { echo "cannot copy the hidden tests"; return 1; }
+  (cd "$work" && python3 -m unittest -q > ../tests.log 2>&1) || {
+    echo "tests failed: $(tail -n 1 "$work/../tests.log")"
+    return 1
+  }
+  if [[ -x "$task_dir/check" ]]; then
+    (cd "$work" && "$task_dir/check" "$task_dir") || return 1
+  fi
+}
+
+for ((run = first_run; run < first_run + BENCH_RUNS; run++)); do
+  for task in "${tasks[@]}"; do
+    for agent in "${agents[@]}"; do
+      task_dir="$PUNY_ROOT/bench/$task"
+      tmp="$(mktemp -d "${TMPDIR:-/tmp}/puny-bench-$task-$agent.XXXXXX")"
+      mkdir -p "$tmp/data"
+      cp -R "$task_dir/start" "$tmp/work"
+      printf '== %s / %s / %s run %d: ' "$label" "$task" "$agent" "$run"
+
+      started=$SECONDS
+      status=0
+      (cd "$tmp/work" && run_agent "$agent" "$tmp/data" "$BENCH_TIMEOUT" "$(<"$task_dir/prompt.txt")") \
+        > "$tmp/agent.log" 2>&1 || status=$?
+      seconds=$((SECONDS - started))
+
+      if [[ $status -eq 142 ]]; then
+        result=timeout
+        detail="no answer within ${BENCH_TIMEOUT}s"
+      elif detail="$(verify "$task_dir" "$tmp/work")"; then
+        result=pass
+        detail=""
+      else
+        result=fail
+      fi
+      # A non-zero exit with passing tests still counts against the agent.
+      if [[ $status -ne 0 && $status -ne 142 ]]; then
+        result="agent-error"
+        detail="agent exited with status $status. $detail"
+      fi
+
+      echo "$result in ${seconds}s${detail:+ ($detail)}"
+      printf '%s\t%s\t%s\t%d\t%s\t%d\n' "$label" "$task" "$agent" "$run" "$result" "$seconds" >> "$results"
+      keep="$out/$task-$agent-$run"
+      rm -rf "$keep"
+      mkdir -p "$keep"
+      cp -R "$tmp/work" "$keep/work"
+      cp "$tmp/agent.log" "$keep/"
+      [[ -f "$tmp/tests.log" ]] && cp "$tmp/tests.log" "$keep/"
+      rm -rf "$tmp"
+    done
+  done
+done
+
+echo
+report

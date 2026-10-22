@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# No mention of the old name may remain outside the hidden tests.
+status=0
+left="$(grep -rn --include='*.py' --exclude='test_hidden_*' calc_tax .)" || status=$?
+case "$status" in
+  0) echo "calc_tax is still mentioned:"; echo "$left"; exit 1 ;;
+  1) exit 0 ;;
+  *) echo "grep failed with status $status"; exit 1 ;;
+esac
