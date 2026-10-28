@@ -477,6 +477,7 @@ class ServeQwenTest(unittest.TestCase):
             "--context", "262144", "--kv-bits", "8", "--cache-entries", "0",
             "--margin", "512M", "--max-prefill-step", "512", "--state-dir", str(state),
             "--record", str(state / "served" / f"port-{self.port}"),
+            "--base-url", f"http://127.0.0.1:{self.port}/v1",
         ])
         self.assertEqual(args[args.index("--") + 1:], [
             "--host", "127.0.0.1", "--port", str(self.port), "--max-tokens", "8192",

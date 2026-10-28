@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check against the running MLX server: the raw tool-call check,
-# then each agent must create a file through its own tools in a fresh folder.
+# the Responses API check when Codex runs, then each agent must create a file through its own tools in a fresh folder.
 # Exits non-zero if any step fails, and says which.
 #
 # The folders live in the system temp directory, outside this repo: OpenCode
@@ -11,8 +11,8 @@
 #
 # SMOKE_TIMEOUT caps each agent's run in seconds (default 300).
 #
-#   ./bin/smoke-test                 OpenCode and Pi
-#   ./bin/smoke-test opencode        one agent
+#   ./bin/smoke-test                 OpenCode and Pi, and Codex if installed
+#   ./bin/smoke-test opencode        only the agents named: opencode, pi, codex
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
@@ -24,9 +24,16 @@ bin="$PUNY_ROOT/bin"
 SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-300}"
 [[ "$SMOKE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die "SMOKE_TIMEOUT must be a positive whole number of seconds"
 agents=("$@")
-[[ ${#agents[@]} -gt 0 ]] || agents=(opencode pi)
+if [[ ${#agents[@]} -eq 0 ]]; then
+  agents=(opencode pi)
+  if command -v codex >/dev/null 2>&1; then
+    agents+=(codex)
+  else
+    echo "codex: skipped, not installed (brew install codex installs it)"
+  fi
+fi
 for agent in "${agents[@]}"; do
-  [[ "$agent" == opencode || "$agent" == pi ]] || die "unknown agent '$agent'; expected opencode or pi"
+  [[ " ${RUN_AGENTS[*]} " == *" $agent "* ]] || die "unknown agent '$agent'; expected one of: ${RUN_AGENTS[*]}"
 done
 
 prompt_for() {
@@ -38,6 +45,12 @@ failed=()
 echo "== raw tool call"
 if ! "$bin/check-tool-calls"; then
   failed+=("raw tool call")
+fi
+if [[ " ${agents[*]} " == *" codex "* ]]; then
+  echo "== Responses API"
+  if ! "$bin/check-responses-api"; then
+    failed+=("Responses API")
+  fi
 fi
 
 for agent in "${agents[@]}"; do

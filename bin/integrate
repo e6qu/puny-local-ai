@@ -2,8 +2,8 @@
 # Adds the local model to the coding agents' own configs, so that `opencode`,
 # `pi` and `codex` can use it without the launchers, and removes it again.
 #
-#   ./bin/integrate install [AGENT...]    default: opencode and pi if installed,
-#                                         and codex if CODEX_BASE_URL is set
+#   ./bin/integrate install [AGENT...]    default: each of opencode, pi and
+#                                         codex that is installed
 #   ./bin/integrate uninstall [AGENT...]  default: opencode pi codex
 #   ./bin/integrate status
 #
@@ -15,8 +15,7 @@
 # install time. The window is the one ./bin/serve-qwen will advertise for the
 # same settings (QWEN_PRESET, QWEN_CONTEXT and the rest): the model card's,
 # or less when that does not fit in the memory the GPU may use. So the model
-# must be downloaded first. Codex also needs CODEX_BASE_URL, a proxy that
-# serves the Responses API. Run install again after changing any of them.
+# must be downloaded first. Run install again after changing any of them.
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
@@ -31,19 +30,16 @@ agents=("$@")
 case "$command" in
   install)
     if [[ ${#agents[@]} -eq 0 ]]; then
-      for agent in opencode pi; do
+      for agent in opencode pi codex; do
         if command -v "$agent" >/dev/null 2>&1; then
           agents+=("$agent")
+        elif [[ "$agent" == codex ]]; then
+          echo "codex: skipped, not installed (brew install codex installs it)"
         else
           echo "$agent: skipped, not installed ($PUNY_ROOT/bin/setup $agent installs it)"
         fi
       done
-      if [[ -n "${CODEX_BASE_URL:-}" ]]; then
-        agents+=(codex)
-      else
-        echo "codex: skipped, needs CODEX_BASE_URL (a Responses API proxy; see docs/compatibility.md)"
-      fi
-      [[ ${#agents[@]} -gt 0 ]] || die "no coding agent to set up; install one with $PUNY_ROOT/bin/setup opencode pi"
+      [[ ${#agents[@]} -gt 0 ]] || die "no coding agent to set up; install one with $PUNY_ROOT/bin/setup opencode pi, or brew install codex"
     fi
     # The same window the server will advertise, worked out the same way.
     resolve_model_settings
@@ -72,7 +68,7 @@ fi
 
 status=0
 output="$(PUNY_BASE_URL="$MLX_BASE_URL" PUNY_CONTEXT="$QWEN_CONTEXT" PUNY_MAX_OUTPUT="$QWEN_MAX_OUTPUT" \
-  PUNY_CODEX_BASE_URL="${CODEX_BASE_URL:-}" PUNY_STATE_DIR="$PUNY_ROOT/state" \
+  PUNY_STATE_DIR="$PUNY_ROOT/state" \
   python3 -I "$PUNY_ROOT/lib/integrate.py" "$command" "${agents[@]}")" || status=$?
 [[ -z "$output" ]] || printf '%s\n' "$output"
 

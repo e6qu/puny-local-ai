@@ -72,7 +72,7 @@ class IntegrateTest(unittest.TestCase):
 
     def test_fresh_home_install_and_uninstall_leave_nothing(self):
         result = self.integrate("install")
-        self.assertIn("codex: skipped, needs CODEX_BASE_URL", result.stdout)
+        self.assertIn("codex: skipped, not installed", result.stdout)
         config = self.read_json(self.opencode_dir / "opencode.json")
         self.assertEqual(config["$schema"], "https://opencode.ai/config.json")
         provider = config["providers"]["puny"]
@@ -188,8 +188,8 @@ class IntegrateTest(unittest.TestCase):
             "XDG_CONFIG_HOME": str(self.box.dir / "xdg"),
             "PI_CODING_AGENT_DIR": str(self.box.dir / "pi-dir"),
             "CODEX_HOME": str(self.box.dir / "codex-home"),
-            "CODEX_BASE_URL": "http://127.0.0.1:7000/v1",
         }
+        self.box.stub("codex", "exit 0")
         self.integrate("install", env=env)
         self.assertTrue((self.box.dir / "xdg" / "opencode" / "opencode.json").exists())
         self.assertTrue((self.box.dir / "pi-dir" / "models.json").exists())
@@ -441,11 +441,11 @@ class IntegrateTest(unittest.TestCase):
     # ------------------------------------------------------------ codex
 
     def test_codex_profile(self):
-        self.assertIn("CODEX_BASE_URL", self.integrate("install", "codex", ok=False).stderr)
-        self.integrate("install", "codex", env={"CODEX_BASE_URL": "http://127.0.0.1:7000/v1"})
+        self.integrate("install", "codex", env={"MLX_BASE_URL": "http://127.0.0.1:7000/v1"})
         text = self.codex_file.read_text()
         self.assertTrue(text.startswith("# Added by puny-local-ai"))
         self.assertIn('base_url = "http://127.0.0.1:7000/v1"', text)
+        self.assertIn('wire_api = "responses"', text)
         self.assertIn('model_provider = "puny"', text)
         self.assertIn("model_context_window = 262144", text)
         self.assertIn("codex: installed", self.integrate("status", "codex").stdout)
@@ -453,7 +453,7 @@ class IntegrateTest(unittest.TestCase):
         self.assertEqual(self.home_files(), [])
 
     def test_codex_edits_are_backed_up(self):
-        env = {"CODEX_BASE_URL": "http://127.0.0.1:7000/v1"}
+        env = {}
         self.integrate("install", "codex", env=env)
         self.codex_file.write_text(self.codex_file.read_text() + 'model_reasoning_effort = "high"\n')
         result = self.integrate("install", "codex", env=env | {"QWEN_CONTEXT": "4096"})
@@ -465,8 +465,7 @@ class IntegrateTest(unittest.TestCase):
     def test_codex_refuses_a_profile_it_did_not_write(self):
         self.codex_file.parent.mkdir(parents=True)
         self.codex_file.write_text('model = "mine"\n')
-        env = {"CODEX_BASE_URL": "http://127.0.0.1:7000/v1"}
-        self.assertIn("not added by", self.integrate("install", "codex", env=env, ok=False).stderr)
+        self.assertIn("not added by", self.integrate("install", "codex", ok=False).stderr)
         self.assertIn("not added by", self.integrate("uninstall", "codex", ok=False).stderr)
         self.assertIn("was not added", self.integrate("status", "codex").stdout)
         self.assertEqual(self.codex_file.read_text(), 'model = "mine"\n')

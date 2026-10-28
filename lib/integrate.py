@@ -7,8 +7,7 @@ Usage:
   python3 -I integrate.py config AGENT       print the config a launcher passes
 
 AGENT is opencode, pi or codex. Settings come from the environment, set by
-bin/integrate: PUNY_BASE_URL, PUNY_CONTEXT, PUNY_MAX_OUTPUT, PUNY_STATE_DIR,
-and PUNY_CODEX_BASE_URL for codex.
+bin/integrate: PUNY_BASE_URL, PUNY_CONTEXT, PUNY_MAX_OUTPUT and PUNY_STATE_DIR.
 
 Each agent gets one provider with the id "puny" and the name
 "puny-local-ai", and nothing else changes:
@@ -119,7 +118,7 @@ def pi_provider(s):
     }
 
 
-def codex_profile(s, base_url):
+def codex_profile(s):
     # The provider id must not be a built-in one (openai, ollama, lmstudio):
     # Codex ignores user entries that reuse those ids.
     return (
@@ -130,7 +129,9 @@ def codex_profile(s, base_url):
         + "\n"
         + f"[model_providers.{PROVIDER_ID}]\n"
         + f'name = "{MARKER}"\n'
-        + f"base_url = {json.dumps(base_url)}\n"
+        # bin/serve-qwen answers the Responses API that Codex speaks at the
+        # same address as Chat Completions (lib/responses.py).
+        + f"base_url = {json.dumps(s['base_url'])}\n"
         + 'wire_api = "responses"\n'
     )
 
@@ -467,14 +468,8 @@ def uninstall_json(agent, quiet=False):
 
 
 def install_codex(s):
-    base_url = os.environ.get("PUNY_CODEX_BASE_URL", "")
-    if not base_url:
-        raise Refusal(
-            "codex needs CODEX_BASE_URL, the address of a proxy that serves the Responses API "
-            "in front of the MLX server; mlx_lm.server has none (see docs/compatibility.md)"
-        )
     path = config_file("codex")
-    text = codex_profile(s, base_url)
+    text = codex_profile(s)
     before = None
     if present(path):
         before = read_text(path)

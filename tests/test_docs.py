@@ -5,7 +5,9 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unittest
+import urllib.error
 import urllib.request
 
 from helpers import REPO
@@ -13,8 +15,10 @@ from helpers import REPO
 sys.path.insert(0, str(REPO / "lib"))
 import integrate  # noqa: E402
 
-DOCS = ["README.md", "CONTRIBUTING.md", "THIRD_PARTY.md", "docs/models.md", "docs/compatibility.md"]
+DOCS = ["README.md", "CONTRIBUTING.md", "THIRD_PARTY.md", "docs/models.md", "docs/compatibility.md",
+        "docs/agents.md", "docs/how-it-works.md", "docs/alternatives.md"]
 README = (REPO / "README.md").read_text()
+AGENTS_DOC = (REPO / "docs" / "agents.md").read_text()
 
 
 def blocks(text, language):
@@ -40,11 +44,17 @@ class ReadmeTest(unittest.TestCase):
         return {"base_url": "http://127.0.0.1:8081/v1", "context": 262144, "max_output": 8192}
 
     def test_config_examples_match_what_integrate_writes(self):
-        examples = [json.loads(b) for b in blocks(README, "json")]
+        examples = [json.loads(b) for b in blocks(AGENTS_DOC, "json")]
         s = self.settings()
         self.assertIn({"providers": {"puny": integrate.opencode_provider(s)}}, examples)
         self.assertIn({"providers": {"puny": integrate.pi_provider(s)}}, examples)
-        self.assertIn(integrate.codex_profile(s, "http://HOST:PORT/v1"), blocks(README, "toml"))
+        self.assertIn(integrate.codex_profile(s), blocks(AGENTS_DOC, "toml"))
+
+    def test_every_doc_is_linked_from_the_readme(self):
+        for path in sorted((REPO / "docs").glob("*.md")):
+            with self.subTest(path.name):
+                self.assertIn(f"](docs/{path.name})", README)
+                self.assertIn(f"docs/{path.name}", DOCS)
 
     def test_every_command_is_documented(self):
         for script in sorted((REPO / "bin").iterdir()):
@@ -54,14 +64,14 @@ class ReadmeTest(unittest.TestCase):
     def test_commands_in_the_docs_start_with_dot_slash(self):
         for name in DOCS:
             text = (REPO / name).read_text()
-            for match in re.finditer(r"(?<![./\w~-])(?:bin|tests)/(setup|run|integrate|serve-qwen|smoke-test|[a-z]+-qwen|install-agents|licenses|bench-agents|check-[a-z-]+)\b", text):
+            for match in re.finditer(r"(?<![./\w~-])(?:bin|tests)/(setup|run|integrate|serve-qwen|smoke-test|[a-z]+-qwen|install-agents|licenses|bench-agents|check-[a-z-]+|models|web-ui)\b", text):
                 with self.subTest(file=name, command=match.group()):
                     self.fail(f"{name} shows {match.group()} without ./")
 
     def test_every_setting_is_documented(self):
         settings = set()
         for path in list((REPO / "bin").iterdir()) + list((REPO / "lib").glob("*.sh")):
-            settings |= set(re.findall(r'"\$\{((?:QWEN|MLX|BENCH|SMOKE|CODEX)_[A-Z_]+)[:-]', path.read_text()))
+            settings |= set(re.findall(r'"\$\{((?:QWEN|MLX|BENCH|SMOKE|CODEX|WEB_UI)_[A-Z_]*)[:-]', path.read_text()))
         self.assertTrue(settings)
         documented = (REPO / "README.md").read_text() + (REPO / "docs" / "models.md").read_text()
         for setting in sorted(settings):
@@ -107,7 +117,17 @@ class LinksTest(unittest.TestCase):
         for url in urls:
             with self.subTest(url):
                 request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(request, timeout=30) as response:
+                try:
+                    response = urllib.request.urlopen(request, timeout=30)
+                except urllib.error.HTTPError as e:
+                    e.close()
+                    # Hacker News, for one, answers 503 to many requests in a
+                    # row; one slower retry tells that from a dead link.
+                    if e.code not in (429, 503):
+                        raise
+                    time.sleep(10)
+                    response = urllib.request.urlopen(request, timeout=30)
+                with response:
                     self.assertEqual(response.status, 200)
 
 

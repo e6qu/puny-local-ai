@@ -3,7 +3,9 @@
 #
 # Nothing here is vendored: mlx-lm and its dependencies are downloaded at the
 # versions and hashes in lib/mlx-lm.lock, and models at a pinned commit, then
-# checked against the hashes Hugging Face lists for that commit.
+# checked against the hashes their source lists for that commit. A model is a
+# Hugging Face repository, or modelscope:REPO for one on ModelScope
+# (lib/sources.py).
 
 # An exact, uv-managed Python, so every machine gets the same interpreter.
 PYTHON_VERSION="3.14.6"
@@ -108,11 +110,14 @@ guard_args() {
     --max-prefill-step "$QWEN_PREFILL_STEP"
     --state-dir "$PUNY_ROOT/state"
     --record "$(served_record)"
+    # The server answers /v1/responses through its own chat endpoint here.
+    --base-url "$MLX_BASE_URL"
   )
 }
 
 model_dir_for() {
-  printf '%s/state/models/%s@%s' "$PUNY_ROOT" "${1//\//--}" "$2"
+  local name="${1/#modelscope:/modelscope--}"
+  printf '%s/state/models/%s@%s' "$PUNY_ROOT" "${name//\//--}" "$2"
 }
 
 # What an installed environment records about itself: the lock and Python.
@@ -158,9 +163,10 @@ ensure_mlx_env() {
   mlx_python="$MLX_ENV_DIR/bin/python"
 }
 
-# ensure_model REPO REVISION downloads the model at that commit unless it is
-# already verified, and checks every file against the hashes Hugging Face
-# lists for the commit. Sets model_dir.
+# ensure_model MODEL REVISION downloads the model at that commit unless it is
+# already verified, and checks every file against the hashes its source
+# lists for the commit. MODEL is a Hugging Face repository or modelscope:REPO.
+# Sets model_dir.
 ensure_model() {
   local repo="$1" revision="$2"
   [[ "$revision" =~ ^[0-9a-f]{40}$ ]] \
@@ -174,26 +180,35 @@ ensure_model() {
     REPO="$repo" REVISION="$revision" DEST="$model_dir" LIB="$PUNY_ROOT/lib" "$mlx_python" -I -c '
 import os, sys
 from pathlib import Path
-from huggingface_hub import HfApi, snapshot_download
 sys.path.insert(0, os.environ["LIB"])
-import memory
+import memory, sources
 repo, revision, dest = os.environ["REPO"], os.environ["REVISION"], Path(os.environ["DEST"])
-info = HfApi().model_info(repo, revision=revision, files_metadata=True)
+try:
+    files = sources.listed_files(repo, revision)
+except sources.SourceError as e:
+    sys.exit(f"error: cannot list the files of {repo} at {revision}: {e}")
 missing = sum(
-    f.size for f in info.siblings
-    if not ((dest / f.rfilename).is_file() and (dest / f.rfilename).stat().st_size == f.size)
+    f["size"] for f in files
+    if not ((dest / f["path"]).is_file() and (dest / f["path"]).stat().st_size == f["size"])
 )
 free = memory.free_disk_bytes(dest)
 if missing + memory.DISK_RESERVE_BYTES > free:
     sys.exit(f"error: the download needs {memory.gib(missing)} plus {memory.gib(memory.DISK_RESERVE_BYTES)} kept free, and only {memory.gib(free)} is free.")
-snapshot_download(repo, revision=revision, local_dir=dest)
+if sources.split(repo)[0] == "huggingface":
+    from huggingface_hub import snapshot_download
+    snapshot_download(repo, revision=revision, local_dir=dest)
+else:
+    try:
+        sources.download(repo, revision, dest, files)
+    except sources.SourceError as e:
+        sys.exit(f"error: {e}. Run the same command again to continue the download.")
 '
     local status=0
     "$mlx_python" -I "$PUNY_ROOT/lib/verify_model.py" "$repo" "$revision" "$model_dir" || status=$?
     case "$status" in
       0) ;;
       1) die "$model_dir does not match $repo at $revision; delete it and run again to download it afresh" ;;
-      *) die "could not verify $model_dir against Hugging Face; check the network and run again (the download is kept)" ;;
+      *) die "could not verify $model_dir against its source; check the network and run again (the download is kept)" ;;
     esac
   fi
 }
