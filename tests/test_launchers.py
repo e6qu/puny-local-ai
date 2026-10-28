@@ -102,30 +102,22 @@ class CodexLauncherTest(ServerCase):
         super().setUp()
         self.box.stub("codex", "exit 0")
 
-    def test_needs_a_proxy(self):
-        result = self.box.run(["bin/codex-qwen"], extra_env=self.env)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("set CODEX_BASE_URL", result.stderr)
-        self.assertEqual(self.box.called("codex"), [])
-
-    def test_refuses_a_proxy_without_a_responses_api(self):
-        result = self.box.run(["bin/codex-qwen"], extra_env=self.env | {"CODEX_BASE_URL": self.server.base_url})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("has no Responses API; Codex needs a proxy", result.stderr)
-        self.assertEqual(self.box.called("codex"), [])
-
-    def test_starts_codex_through_a_proxy(self):
-        proxy = FakeServer({"POST /v1/responses": (200, {"object": "response", "output": []})})
-        self.addCleanup(proxy.stop)
-        result = self.box.run(["bin/codex-qwen", "exec", "hi"], extra_env=self.env | {"CODEX_BASE_URL": proxy.base_url})
+    def test_starts_codex_on_the_server(self):
+        result = self.box.run(["bin/codex-qwen", "exec", "hi"], extra_env=self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         call = self.box.called("codex")[0]
         self.assertIn("model_provider=puny", call)
-        self.assertIn(f'base_url="{proxy.base_url}"', call)
+        self.assertIn(f'base_url="{self.server.base_url}"', call)
         self.assertIn('wire_api="responses"', call)
         self.assertIn("model_context_window=262144", call)
         self.assertTrue(call.endswith("-m default_model exec hi"))
         self.assertFalse((self.box.home / ".codex").exists())
+
+    def test_refuses_a_server_it_did_not_start(self):
+        record_served(self.box, self.server.base_url, 262144, pid=1)
+        result = self.box.run(["bin/codex-qwen"], extra_env=self.env)
+        self.assertIn("was not started by bin/serve-qwen", result.stderr)
+        self.assertEqual(self.box.called("codex"), [])
 
     def test_refuses_without_codex(self):
         (self.box.stubs / "codex").unlink()

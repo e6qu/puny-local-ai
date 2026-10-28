@@ -18,15 +18,19 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `bin/`: the commands people run. Each one starts by sourcing `lib/common.sh`.
 - `lib/common.sh`: settings shared by every script, `die`, and the server checks.
 - `lib/mlx.sh`: the model presets, the mlx-lm environment and model downloads.
-- `lib/agents.sh`: the pinned OpenCode and Pi versions and how to run them.
+- `lib/agents.sh`: the pinned OpenCode and Pi versions, and how to run OpenCode, Pi and Codex for the smoke test and the benchmark.
 - `lib/mlx-lm.lock`: mlx-lm and its dependencies, with hashes.
-- `lib/serve.py`: runs mlx_lm.server behind the memory and disk guards. It hooks into mlx-lm's server internals and refuses to run with any mlx-lm version other than the pinned one, so check it again when moving the pin.
+- `lib/serve.py`: runs mlx_lm.server behind the memory and disk guards, and adds the Responses API and its own `/v1/models`. It hooks into mlx-lm's server internals and refuses to run with any mlx-lm version other than the pinned one, so check it again when moving the pin.
+- `lib/responses.py`: translates the Responses API that Codex speaks into Chat Completions and back; [docs/how-it-works.md](docs/how-it-works.md#how-codex-is-served) describes it.
 - `lib/memory.py`: the memory estimates and their measured constants. Measure again before changing a constant, and record how in its docstring.
-- `lib/verify_model.py`: the model hash check.
+- `lib/sources.py`: Hugging Face and ModelScope: search, commits, file lists with hashes, and ModelScope downloads.
+- `lib/verify_model.py`: the model hash check, for either source.
+- `lib/models.py`: `./bin/models search`, `info` and `list`, including the memory estimate for a model that is not downloaded.
+- `lib/webui.py` and `lib/webui.html`: the page `./bin/web-ui` serves and its API.
 - `lib/integrate.py` and `lib/jsonc.py`: add the provider to the agents' own configs and remove it again, editing JSON and JSONC in place without touching anything else. `lib/integrate.py` also generates the config the launchers pass, so both always agree.
 - `tests/`: the test suite; see [Tests](#tests).
 - `bench/`: the benchmark tasks. Each has `start/` (the project the agent gets), `hidden/` (tests it never sees), `prompt.txt` and an optional `check` script.
-- `docs/`: background that does not belong in the README.
+- `docs/`: background that does not belong in the README. [docs/how-it-works.md](docs/how-it-works.md) holds the implementation details; keep the README to what users do.
 - `state/`: everything downloaded or produced at run time. It is ignored by git; delete it to start over.
 
 ## Rules
@@ -62,8 +66,8 @@ After any pin change, run `./bin/licenses` and replace the tables in THIRD_PARTY
 
 Every test runs the scripts from a temporary copy of the repo, with its own `state/` and its own home folder, so tests never touch your agent configs, downloads or `~/`. They run in the mlx-lm environment, which `./tests/run` installs if needed.
 
-- **Fast tests** cover every script and library. Stub programs stand in for `npm`, `node`, `df`, `uv`, `opencode`, `pi` and `codex`; a fake mlx-lm environment and fake model folders stand in for the real ones; a local fake stands in for `mlx_lm.server` and for Hugging Face, which is otherwise blocked; and the memory readings are replaced where a test needs a full or empty machine. They never download anything or touch the real `state/`. The benchmark tests apply reference solutions from `tests/fixtures/solutions/` to show that each task can be solved and that its hidden tests catch the unsolved start.
-- **Live tests** need `./bin/setup mlx small opencode pi`, Codex (`brew install codex`) for the integration test, network access and about 7 GiB of free memory. They start the guarded server with the small model and run the checks and both real agents against it; run `./bin/integrate` against the real OpenCode, Pi and Codex; start a private OpenCode background service on its own port to check the restart notice; and check that every pinned model commit still exists and that `./bin/licenses` still matches THIRD_PARTY.md.
+- **Fast tests** cover every script and library. Stub programs stand in for `npm`, `node`, `df`, `uv`, `opencode`, `pi` and `codex`; a fake mlx-lm environment and fake model folders stand in for the real ones; local fakes stand in for `mlx_lm.server`, Hugging Face and ModelScope, which are otherwise blocked; and the memory readings are replaced where a test needs a full or empty machine. They never download anything or touch the real `state/`. The benchmark tests apply reference solutions from `tests/fixtures/solutions/` to show that each task can be solved and that its hidden tests catch the unsolved start.
+- **Live tests** need `./bin/setup mlx small opencode pi`, Codex (`brew install codex`), network access and about 7 GiB of free memory. They start the guarded server with the small model and run the checks and all three real agents against it; run `./bin/integrate` against the real OpenCode, Pi and Codex; start a private OpenCode background service on its own port to check the restart notice; and check that every pinned model commit still exists and that `./bin/licenses` still matches THIRD_PARTY.md.
 
 ## Before sending a change
 
@@ -78,7 +82,7 @@ Every test runs the scripts from a temporary copy of the repo, with its own `sta
    ./bin/bench-agents report
    ```
 
-4. The README and `docs/` match the change.
+4. The README and `docs/` match the change, and every new doc is linked from the README's "More documentation".
 
 Keep one change per pull request. Pull requests are squash-merged into a single commit with a one-line message, so the branch history does not need tidying.
 

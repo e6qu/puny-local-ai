@@ -2,7 +2,7 @@
 
 Usage: python -I serve.py --model-dir DIR --context TOKENS --kv-bits BITS
            --cache-entries N --margin SIZE --max-prefill-step TOKENS
-           --state-dir DIR -- MLX_LM_SERVER_ARGS...
+           --state-dir DIR --base-url URL -- MLX_LM_SERVER_ARGS...
 
 Before loading the model it refuses to start when:
   - not even MIN_START_TOKENS of context fit in the memory macOS lets the GPU
@@ -19,6 +19,10 @@ While serving it:
   - rejects requests for any model, adapter or draft model other than the
     one it was started with, which mlx-lm would otherwise load unchecked;
   - picks the prefill step for each request, the largest that fits;
+  - serves the OpenAI Responses API at /v1/responses, which Codex needs and
+    mlx-lm lacks, by translating it to the server's own Chat Completions
+    (lib/responses.py), so those requests pass the same guards;
+  - lists only default_model at /v1/models, the one name it accepts;
   - stops the server, with a message, when free memory or disk falls to an
     emergency floor, for example because another application took the
     memory, or when the watchdog itself fails.
@@ -37,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import memory  # noqa: E402
+import responses  # noqa: E402
 
 import mlx.core as mx  # noqa: E402
 import mlx_lm  # noqa: E402
@@ -70,6 +75,7 @@ def parse_args():
     parser.add_argument("--margin", dest="margin_bytes", type=memory.parse_bytes, required=True)
     parser.add_argument("--max-prefill-step", dest="max_prefill_step_tokens", type=int, required=True)
     parser.add_argument("--state-dir", required=True)
+    parser.add_argument("--base-url", required=True, help="the server's own address, http://HOST:PORT/v1, for the Responses API")
     parser.add_argument("--record", help="where to record the process id and the usable window for the launchers")
     parser.add_argument("--print-window", action="store_true", help="print the usable window and exit")
     parser.add_argument("server_args", nargs=argparse.REMAINDER)
@@ -198,6 +204,39 @@ def guard_models():
     server.ModelProvider.load = load
 
 
+def add_routes(base_url):
+    """Adds the Responses API and replaces the model list.
+
+    POST /v1/responses is answered through the server's own
+    /v1/chat/completions. GET /v1/models lists default_model, the only name
+    guard_models accepts; mlx-lm would list the Hugging Face cache instead,
+    which this setup keeps elsewhere, and fails when that folder is missing.
+    The list also carries an empty "models" catalog, the shape Codex reads
+    from the same path; with it, Codex uses its default model settings
+    instead of logging a decode error.
+    """
+    original_post, original_get = server.APIHandler.do_POST, server.APIHandler.do_GET
+    chat_url = base_url.rstrip("/") + "/chat/completions"
+
+    def do_POST(self):
+        if self.path in responses.PATHS:
+            responses.serve(self, chat_url)
+        else:
+            original_post(self)
+
+    def do_GET(self):
+        if self.path.split("?")[0] in ("/v1/models", "/v1/models/default_model"):
+            model = {"id": "default_model", "object": "model", "created": self.created, "owned_by": "puny-local-ai"}
+            body = model if self.path.split("?")[0].endswith("/default_model") else {
+                "object": "list", "data": [model], "models": []}
+            responses.send_json(self, 200, body)
+        else:
+            original_get(self)
+
+    server.APIHandler.do_POST = do_POST
+    server.APIHandler.do_GET = do_GET
+
+
 def watch(args):
     """Stops the server before macOS runs out of memory or disk.
 
@@ -257,6 +296,7 @@ def main():
     mx.set_cache_limit(memory.MLX_CACHE_LIMIT_BYTES)
     guard_requests(args, config, gpu_limit_bytes)
     guard_models()
+    add_routes(args.base_url)
     threading.Thread(target=watch, args=(args,), daemon=True).start()
 
     # The estimates in lib/memory.py assume these values, so they are passed

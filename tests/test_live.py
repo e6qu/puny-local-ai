@@ -51,11 +51,11 @@ class RealAgentsIntegrateTest(unittest.TestCase):
                               timeout=timeout, cwd=self.box.work, stdin=subprocess.DEVNULL)
 
     def test_agents_see_the_model_and_uninstall_restores_everything(self):
-        # A proxy that answers at once with an error, so Codex prints its
+        # A server that answers at once with an error, so Codex prints its
         # settings and stops instead of retrying a refused connection.
-        proxy = FakeServer({"POST /v1/responses": (400, {"error": {"message": "test proxy"}})})
-        self.addCleanup(proxy.stop)
-        env = {"CODEX_BASE_URL": proxy.base_url}
+        answering = FakeServer({"POST /v1/responses": (400, {"error": {"message": "test server"}})})
+        self.addCleanup(answering.stop)
+        env = {"MLX_BASE_URL": answering.base_url}
         result = self.box.run(["bin/integrate", "install"], extra_env=env, path_dirs=self.paths)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -118,7 +118,7 @@ class RealOpenCodeServiceTest(unittest.TestCase):
 
 @unittest.skipUnless(LIVE, "live test: run ./tests/run --live")
 class RealServerTest(unittest.TestCase):
-    """bin/serve-qwen with the small model, then the checks and both agents against it."""
+    """bin/serve-qwen with the small model, then the checks and the agents against it."""
 
     @classmethod
     def setUpClass(cls):
@@ -127,7 +127,7 @@ class RealServerTest(unittest.TestCase):
         cls.box = Sandbox(link_mlx_env=True)
         # Live tests use the real downloaded models; fast tests never do.
         (cls.box.root / "state" / "models").symlink_to(REPO / "state" / "models")
-        cls.paths = real_tool_dirs()
+        cls.paths = real_tool_dirs() + [str(Path(which("codex")).parent)]
         cls.port = free_port()
         cls.env = {"MLX_BASE_URL": f"http://127.0.0.1:{cls.port}/v1", "QWEN_PRESET": "small"}
         cls.log = open(cls.box.dir / "server.log", "w")
@@ -200,15 +200,17 @@ class RealServerTest(unittest.TestCase):
         self.assertGreater(body["usage"]["prompt_tokens"], 30000)
         self.assertRegex(self.server_log(), r"Admitted \d+ tokens with prefill step \d+")
 
-    def test_codex_launcher_stops_without_a_responses_api(self):
-        result = self.run_script(["bin/codex-qwen"], extra={"CODEX_BASE_URL": self.env["MLX_BASE_URL"]})
-        self.assertIn("has no Responses API", result.stderr)
-        self.assertNotEqual(result.returncode, 0)
+    def test_responses_api_and_model_list(self):
+        result = self.run_script(["bin/check-responses-api"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/v1/models", timeout=30) as response:
+            self.assertEqual([m["id"] for m in json.load(response)["data"]], ["default_model"])
 
-    def test_smoke_test_with_both_real_agents(self):
-        result = self.run_script(["bin/smoke-test"], timeout=900)
+    def test_smoke_test_with_every_real_agent(self):
+        result = self.run_script(["bin/smoke-test"], timeout=1500)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("All smoke tests passed.", result.stdout)
+        self.assertIn("OK: codex created hello.txt", result.stdout)
 
 
 @unittest.skipUnless(LIVE, "live test: run ./tests/run --live")
@@ -216,7 +218,7 @@ class RealSourcesTest(unittest.TestCase):
     """The pinned sources still exist and say what the docs say."""
 
     def test_every_pinned_model_commit_lists_its_files(self):
-        import verify_model
+        import sources
 
         box = Sandbox()
         self.addCleanup(box.cleanup)
@@ -226,7 +228,7 @@ class RealSourcesTest(unittest.TestCase):
                 env=box.env(), capture_output=True, text=True,
             ).stdout.split()
             with self.subTest(preset):
-                files = verify_model.listed_files(out[0], out[1])
+                files = sources.listed_files(out[0], out[1])
                 names = {f["path"] for f in files}
                 self.assertIn("config.json", names)
                 self.assertTrue(any(re.fullmatch(r"model.*\.safetensors", n) for n in names))

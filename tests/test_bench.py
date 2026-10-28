@@ -150,7 +150,7 @@ class BenchAgentsTest(ServerCase):
             (["bin/bench-agents", "x"], {"BENCH_TASKS": "nope"}, "bench/nope/prompt.txt is missing"),
             (["bin/bench-agents", "x"], {"BENCH_TASKS": "  "}, "BENCH_TASKS names no task"),
             (["bin/bench-agents", "x"], {"BENCH_AGENTS": "  "}, "BENCH_AGENTS names no agent"),
-            (["bin/bench-agents", "x"], {"BENCH_AGENTS": "opencode codex"}, "unknown agent 'codex' in BENCH_AGENTS"),
+            (["bin/bench-agents", "x"], {"BENCH_AGENTS": "opencode claude"}, "unknown agent 'claude' in BENCH_AGENTS"),
         ]
         for args, extra, message in cases:
             with self.subTest(message):
@@ -193,9 +193,20 @@ class SmokeTestTest(ServerCase):
                 self.assertIn("failed: pi", result.stderr)
 
     def test_bad_arguments(self):
-        self.assertIn("unknown agent 'codex'", self.smoke("hello", "codex").stderr)
+        self.assertIn("unknown agent 'claude'", self.smoke("hello", "claude").stderr)
         self.assertIn("SMOKE_TIMEOUT must be a positive whole number", self.smoke("hello", extra={"SMOKE_TIMEOUT": "0"}).stderr)
         self.assertEqual(self.box.called("opencode"), [])
+
+    def test_codex_needs_the_responses_api(self):
+        self.agent_stubs("codex")
+        result = self.smoke("hello", "codex")
+        self.assertIn("failed: Responses API", result.stderr)
+        self.server.routes["POST /v1/responses"] = (200, {"object": "response", "output": []})
+        result = self.smoke("hello", "codex")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("OK: codex created hello.txt", result.stdout)
+        call = self.box.called("codex")[-1]
+        self.assertIn("exec --skip-git-repo-check --ephemeral --ignore-user-config --sandbox workspace-write", call)
 
     def test_fails_when_tool_calls_do_not_work(self):
         self.server.routes["POST /v1/chat/completions"] = (200, {"choices": [{"message": {"content": "hi"}}]})

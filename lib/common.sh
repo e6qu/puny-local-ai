@@ -117,7 +117,7 @@ print(json.dumps({"model": os.environ["MODEL"], "input": "Reply with the word re
 import json, os, sys
 status, body, base = os.environ["STATUS"], os.environ["BODY"], os.environ["BASE"]
 if status == "404":
-    sys.exit(f"error: {base}/responses does not exist (HTTP 404). mlx_lm.server has no Responses API; Codex needs a proxy that provides one.")
+    sys.exit(f"error: {base}/responses does not exist (HTTP 404). Start the server with bin/serve-qwen, which serves the Responses API that Codex needs; plain mlx_lm.server does not.")
 try:
     data = json.loads(body)
 except ValueError:

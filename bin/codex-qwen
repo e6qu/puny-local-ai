@@ -2,28 +2,23 @@
 # Starts Codex on the local MLX model, configured entirely through -c
 # overrides so ~/.codex/config.toml stays untouched.
 #
-# Codex only speaks the OpenAI Responses API, and mlx_lm.server has no
-# /v1/responses route. Point CODEX_BASE_URL at a proxy that translates
-# Responses to Chat Completions in front of MLX. This launcher checks the
-# endpoint first and stops with an explanation when it is missing.
+# Codex speaks only the OpenAI Responses API. The server that ./bin/serve-qwen
+# starts answers it at MLX_BASE_URL/responses, translated to Chat Completions
+# by lib/responses.py, so Codex uses the same address as OpenCode and Pi.
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 require_command codex "Install it with: brew install codex"
-[[ -n "${CODEX_BASE_URL:-}" ]] \
-  || die "set CODEX_BASE_URL to a proxy that serves the Responses API in front of the MLX server; mlx_lm.server has none (see docs/compatibility.md)"
-# The proxy sits in front of the MLX server at MLX_BASE_URL, whose context
-# window Codex is told.
+# Also checks that ./bin/serve-qwen started the server, so it has the
+# Responses API.
 load_served_context
-CODEX_BASE_URL="${CODEX_BASE_URL%/}"
-require_responses_api "$CODEX_BASE_URL"
 
 # The provider id must not be a built-in one (openai, ollama, lmstudio):
 # Codex silently ignores user entries that reuse those ids.
 exec codex \
   -c model_provider=puny \
-  -c "model_providers.puny={name=\"puny-local-ai\", base_url=\"$CODEX_BASE_URL\", wire_api=\"responses\"}" \
+  -c "model_providers.puny={name=\"puny-local-ai\", base_url=\"$MLX_BASE_URL\", wire_api=\"responses\"}" \
   -c "model_context_window=$QWEN_CONTEXT" \
   -m "$MLX_MODEL" \
   "$@"

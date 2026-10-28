@@ -6,11 +6,16 @@ OPENCODE_VERSION="2.1.1"
 PI_PACKAGE="@earendil-works/pi-coding-agent"
 PI_VERSION="1.3.0"
 
+# The agents run_agent knows. Codex is not pinned here: it comes from
+# brew install codex.
+RUN_AGENTS=(opencode pi codex)
+
 # run_agent AGENT DATA_DIR TIMEOUT PROMPT
-# Runs AGENT (opencode or pi) in the current folder on PROMPT. DATA_DIR holds
-# OpenCode's private data, so runs neither wait on nor land in your real
-# session database. perl's alarm ends the run with status 142 after TIMEOUT
-# seconds.
+# Runs AGENT (opencode, pi or codex) in the current folder on PROMPT. DATA_DIR
+# holds OpenCode's private data, so runs neither wait on nor land in your real
+# session database; Codex runs without saving a session and without your
+# ~/.codex/config.toml. perl's alarm ends the run with status 142 after
+# TIMEOUT seconds.
 run_agent() {
   local agent="$1" data="$2" timeout="$3" prompt="$4"
   case "$agent" in
@@ -23,7 +28,12 @@ run_agent() {
       perl -e 'alarm shift; exec @ARGV' "$timeout" \
         "$PUNY_ROOT/bin/pi-qwen" -p --no-session "$prompt" < /dev/null
       ;;
-    *) die "unknown agent '$agent'; expected opencode or pi" ;;
+    codex)
+      perl -e 'alarm shift; exec @ARGV' "$timeout" \
+        "$PUNY_ROOT/bin/codex-qwen" exec --skip-git-repo-check --ephemeral --ignore-user-config \
+        --sandbox workspace-write "$prompt" < /dev/null
+      ;;
+    *) die "unknown agent '$agent'; expected ${RUN_AGENTS[*]}" ;;
   esac
 }
 

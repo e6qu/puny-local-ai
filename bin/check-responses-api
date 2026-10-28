@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Checks whether an endpoint implements the OpenAI Responses API, which Codex
-# needs. Checks MLX_BASE_URL by default; pass another base URL (for example a
-# proxy in front of MLX) as the first argument.
+# Checks that the server answers the OpenAI Responses API, which Codex uses.
+# ./bin/serve-qwen serves it at MLX_BASE_URL/responses. Pass another base URL
+# as the first argument to check a different server.
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.

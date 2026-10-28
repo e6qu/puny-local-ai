@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Starts a local web page for chatting with the served model, and for
+# searching, checking and downloading MLX models from Hugging Face and
+# ModelScope. Runs in the foreground; Ctrl-C stops it. lib/webui.py has the
+# details.
+#
+# Settings:
+#   WEB_UI_URL    where the page listens, http://127.0.0.1:8090 by default.
+#                 Keep it on 127.0.0.1: the page can start downloads.
+#   MLX_BASE_URL  the model server it chats with; see lib/common.sh.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+
+WEB_UI_URL="${WEB_UI_URL:-http://127.0.0.1:8090}"
+WEB_UI_URL="${WEB_UI_URL%/}"
+[[ "$WEB_UI_URL" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})$ ]] \
+  || die "WEB_UI_URL must look like http://127.0.0.1:PORT; the page only listens on this Mac, not $WEB_UI_URL"
+port="${BASH_REMATCH[2]}"
+busy="$(listener_pid "$port")"
+[[ -z "$busy" ]] \
+  || die "port $port is already in use by $(ps -p "$busy" -o comm= || echo "an unknown program") (pid $busy). Stop it, or set WEB_UI_URL to a free port."
+
+ensure_mlx_env
+exec "$mlx_python" -I "$PUNY_ROOT/lib/webui.py" --listen "$WEB_UI_URL" --mlx-base-url "$MLX_BASE_URL" --repo "$PUNY_ROOT"

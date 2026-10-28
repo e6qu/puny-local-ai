@@ -253,6 +253,62 @@ class WatchdogTest(Patched):
         self.assertIn("vm_stat broke", err)
 
 
+class RoutesTest(unittest.TestCase):
+    """add_routes on mlx-lm's real request handler, with a fake chat endpoint for /v1/responses."""
+
+    def setUp(self):
+        import http.server
+        import threading
+        from helpers import FakeServer
+        for name in ("do_POST", "do_GET"):
+            self.addCleanup(setattr, serve.server.APIHandler, name, getattr(serve.server.APIHandler, name))
+        self.upstream = FakeServer({"POST /v1/chat/completions": (200, {
+            "choices": [{"message": {"role": "assistant", "content": "ready"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})})
+        self.addCleanup(self.upstream.stop)
+        serve.add_routes(self.upstream.base_url)
+        generator = types.SimpleNamespace(cli_args=types.SimpleNamespace(allowed_origins=["*"]))
+        self.httpd = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), lambda *a, **k: serve.server.APIHandler(generator, *a, system_fingerprint="t", **k))
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def fetch(self, path, body=None):
+        import json
+        import urllib.error
+        import urllib.request
+        request = urllib.request.Request(self.base + path, data=json.dumps(body).encode() if body else None,
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode()
+
+    def test_models_lists_only_default_model(self):
+        import json
+        status, text = self.fetch("/v1/models")
+        self.assertEqual(status, 200)
+        self.assertEqual([m["id"] for m in json.loads(text)["data"]], ["default_model"])
+        # Codex asks the same path for its own catalog format.
+        self.assertEqual(json.loads(self.fetch("/v1/models?client_version=0.165.0")[1])["models"], [])
+        self.assertEqual(json.loads(self.fetch("/v1/models/default_model")[1])["id"], "default_model")
+
+    def test_responses_go_through_the_chat_endpoint(self):
+        import json
+        status, text = self.fetch("/v1/responses", {"model": "default_model", "input": "hi"})
+        self.assertEqual(status, 200, text)
+        self.assertEqual(json.loads(text)["output"][0]["content"][0]["text"], "ready")
+        self.assertEqual(self.upstream.requests[0][1], "/v1/chat/completions")
+
+    def test_other_paths_reach_mlx_lm(self):
+        self.assertEqual(self.fetch("/nothing")[0], 404)
+        self.assertEqual(self.fetch("/v1/nothing", {"x": 1})[0], 404)
+
+
 class MainTest(Patched):
     """serve.main wires everything together; mlx-lm itself is replaced."""
 
@@ -265,6 +321,8 @@ class MainTest(Patched):
             (serve.server, "main"): lambda: setattr(self, "handed", list(sys.argv)),
             (serve.server.ResponseGenerator, "_tokenize"): serve.server.ResponseGenerator._tokenize,
             (serve.server.ModelProvider, "load"): serve.server.ModelProvider.load,
+            (serve.server.APIHandler, "do_POST"): serve.server.APIHandler.do_POST,
+            (serve.server.APIHandler, "do_GET"): serve.server.APIHandler.do_GET,
             (serve.mx, "device_info"): lambda: {"max_recommended_working_set_size": GPU},
             (serve.mx, "set_cache_limit"): self.cache_limits.append,
             (memory, "load_config"): lambda d: KAT,
@@ -280,7 +338,7 @@ class MainTest(Patched):
         original = sys.argv
         sys.argv = ["serve.py", "--model-dir", "/models/kat", "--context", "262144", "--kv-bits", kv_bits,
                     "--cache-entries", "0", "--margin", "512M", "--max-prefill-step", step,
-                    "--state-dir", "/repo/state", "--", "--host", "127.0.0.1", "--port", "9", *extra]
+                    "--state-dir", "/repo/state", "--base-url", "http://127.0.0.1:9/v1", "--", "--host", "127.0.0.1", "--port", "9", *extra]
         err = io.StringIO()
         try:
             with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
@@ -293,6 +351,7 @@ class MainTest(Patched):
 
     def test_wiring(self):
         tokenize, load = serve.server.ResponseGenerator._tokenize, serve.server.ModelProvider.load
+        do_post, do_get = serve.server.APIHandler.do_POST, serve.server.APIHandler.do_GET
         code, err = self.run_main()
         self.assertEqual(code, 0, err)
         self.assertEqual(self.handed, [
@@ -304,6 +363,8 @@ class MainTest(Patched):
         self.assertEqual(self.threads, [(serve.watch, True)])
         self.assertIsNot(serve.server.ResponseGenerator._tokenize, tokenize)
         self.assertIsNot(serve.server.ModelProvider.load, load)
+        self.assertIsNot(serve.server.APIHandler.do_POST, do_post)
+        self.assertIsNot(serve.server.APIHandler.do_GET, do_get)
         self.assertEqual(self.disk_paths, ["/repo"])
 
     def test_refuses_options_the_guard_depends_on(self):
