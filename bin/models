@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Finds, checks and downloads MLX models, from Hugging Face or ModelScope.
+#
+#   ./bin/models search QUERY [--source=huggingface|modelscope|all]
+#   ./bin/models info MODEL[@REVISION]      size, architecture, tool calls,
+#                                           whether it fits, how to serve it
+#   ./bin/models download MODEL[@REVISION]  download and verify at a commit
+#   ./bin/models list                       what is in state/models
+#
+# MODEL is a Hugging Face repository such as mlx-community/Qwen3.5-4B-4bit, or
+# modelscope:REPO for the copy on ModelScope. REVISION defaults to main and is
+# resolved to the commit it points to now; the download is pinned to that
+# commit and checked against the hashes published for it, like the presets.
+# lib/models.py explains the checks.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+
+usage="usage: $PUNY_ROOT/bin/models search QUERY | info MODEL[@REVISION] | download MODEL[@REVISION] | list"
+[[ $# -gt 0 ]] || die "$usage"
+command="$1"
+shift
+case "$command" in
+  search | info | list)
+    ensure_mlx_env
+    exec "$mlx_python" -I "$PUNY_ROOT/lib/models.py" "$command" "$@"
+    ;;
+  download)
+    [[ $# -eq 1 ]] || die "usage: $PUNY_ROOT/bin/models download MODEL[@REVISION]"
+    ensure_mlx_env
+    resolved="$(SPEC="$1" LIB="$PUNY_ROOT/lib" "$mlx_python" -I -c '
+import os, sys
+sys.path.insert(0, os.environ["LIB"])
+import sources
+name, _, ref = os.environ["SPEC"].partition("@")
+try:
+    sources.split(name)
+    print(name, sources.head_commit(name, ref or "main"))
+except sources.SourceError as e:
+    sys.exit(f"error: {e}")
+')"
+    read -r repo revision <<< "$resolved"
+    ensure_model "$repo" "$revision"
+    echo "Downloaded and verified $repo at $revision."
+    echo "Check it with:  $PUNY_ROOT/bin/models info $repo@$revision"
+    echo "Serve it with:  QWEN_REPO=$repo QWEN_REVISION=$revision QWEN_CONTEXT=TOKENS $PUNY_ROOT/bin/serve-qwen"
+    echo "                (TOKENS is the context window its model card states)"
+    ;;
+  *) die "$usage" ;;
+esac

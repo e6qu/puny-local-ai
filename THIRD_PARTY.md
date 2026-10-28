@@ -7,7 +7,7 @@ This repository contains only its own work, under the MIT license in [LICENSE](L
 | What | Pinned in | Checked by |
 |---|---|---|
 | mlx-lm and its Python dependencies | [`lib/mlx-lm.lock`](lib/mlx-lm.lock): exact versions and file hashes | `uv pip install --require-hashes` into `state/mlx-env`; a changed file stops the install |
-| Models | `lib/mlx.sh`: Hugging Face repository and full commit hash per preset | [`lib/verify_model.py`](lib/verify_model.py) compares every file with the hashes Hugging Face lists for that commit (SHA-256 for large files, git blob hash for small ones) and writes the result to `.verified` in the model folder |
+| Models | `lib/mlx.sh`: Hugging Face repository and full commit hash per preset. Other models, from Hugging Face or ModelScope, are pinned to a commit by `./bin/models download` or `QWEN_REVISION` | [`lib/verify_model.py`](lib/verify_model.py) compares every file with the hashes the source lists for that commit (SHA-256, or the git blob hash for Hugging Face's small files) and writes the result to `.verified` in the model folder |
 | OpenCode and Pi | `lib/agents.sh`: npm package and exact version | `./bin/install-agents` refuses releases younger than 24 hours; npm checks the package integrity hash. If an `opencode` command is already installed, it runs `opencode upgrade 2.1.1` instead, which downloads through whatever installed OpenCode. Either way it then checks the version the command reports |
 | Python for mlx-lm | `lib/mlx.sh`: exact version, 3.14.6 | uv downloads its own build into `state/python` and never uses a system Python |
 
@@ -16,7 +16,7 @@ Installed beforehand, as the [README's bootstrap](README.md#bootstrap) describes
 - Apple's command line tools, for `git` and `python3`. `curl`, `perl`, `lsof` and `vm_stat` come with macOS.
 - [uv](https://github.com/astral-sh/uv) (MIT or Apache-2.0), which downloads Python 3.14.6 (PSF-2.0) for mlx-lm.
 - Node.js 22.19 or newer with npm, for OpenCode and Pi.
-- For `./bin/codex-qwen` only, [Codex](https://github.com/openai/codex) (Apache-2.0), from `brew install codex`; tested with 0.163.0.
+- Optionally, [Codex](https://github.com/openai/codex) (Apache-2.0), from `brew install codex`; tested with 0.165.0.
 
 OpenCode is pinned to 2.1.1. As of 2026-10-22, every test had run on OpenCode 2.0.32, the version installed here; 2.1.1 was published on 2026-10-20 at 13:33 UTC.
 
@@ -84,9 +84,11 @@ The small preset's MLX conversion has no model card, so its license comes from t
 
 These shaped the code but none of their text or code is copied in. Each link points at the exact version consulted.
 
-- **mlx-lm 0.32.2** ([commit `93e6d4a6`](https://github.com/ml-explore/mlx-lm/tree/93e6d4a6447b3080861985947f0820e76fcb957d), MIT, Copyright © 2023 Apple Inc.): server behavior that the scripts work around or rely on is linked line by line in the docs and in comments. `lib/memory.py` repeats two of its defaults, `--kv-group-size 64` and `--quantized-kv-start 5000` ([`server.py` lines 2062–2073](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/server.py#L2062-L2073)). `lib/serve.py` imports the server and wraps its `ResponseGenerator._tokenize` to check each request; it copies no code.
+- **mlx-lm 0.32.2** ([commit `93e6d4a6`](https://github.com/ml-explore/mlx-lm/tree/93e6d4a6447b3080861985947f0820e76fcb957d), MIT, Copyright © 2023 Apple Inc.): server behavior that the scripts work around or rely on is linked line by line in the docs and in comments. `lib/models.py` calls mlx-lm's own tool-parser detection and model-type mapping. `lib/memory.py` repeats two of its defaults, `--kv-group-size 64` and `--quantized-kv-start 5000` ([`server.py` lines 2062–2073](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/server.py#L2062-L2073)). `lib/serve.py` imports the server and wraps its `ResponseGenerator._tokenize` to check each request; it copies no code.
 - **Qwen3.6-35B-A3B model card** ([commit `995ad96e`](https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/995ad96eacd98c81ed38be0c5b274b04031597b0/README.md), Apache-2.0): the sampling settings `top_p=0.95, top_k=20, min_p=0.0` and temperature 0.6.
 - **KAT-Coder-V2.5-Dev model card** ([commit `7be56fe7`](https://huggingface.co/Kwaipilot/KAT-Coder-V2.5-Dev/blob/7be56fe773e72b6f5ca93c1ae45d828ddb893922/README.md), Apache-2.0): the benchmark scores quoted in [docs/models.md](docs/models.md).
 - **OpenCode v2 and Pi documentation**: the configuration formats written by `./bin/integrate`, `./bin/opencode-qwen` and `./bin/pi-qwen` and shown in the README ([OpenCode migration notes](https://opencode.ai/v2/docs/migrate-v1/), [OpenCode config docs at v2.1.1](https://github.com/anomalyco/opencode/blob/ba546ec1598a70db2570e9c6258028d955ba8f58/packages/web/src/content/docs/config.mdx), [Pi model docs at v1.3.0](https://github.com/earendil-works/pi/blob/71023aec1546d6d677a65669c5665c0927ce0dd0/packages/coding-agent/docs/models.md)).
+- **Codex 0.163.0 source** ([commit `83086188`](https://github.com/openai/codex/tree/83086188ae0614bd882818ff1aa23f3194962012/codex-rs), Apache-2.0): the Responses API requests and events that `lib/responses.py` translates, and the model list format `lib/serve.py` answers. No code is copied.
+- **Hugging Face and ModelScope APIs**: the search, commit and file-list endpoints `lib/sources.py` calls, as [docs/how-it-works.md](docs/how-it-works.md#where-models-come-from) lists them.
 - **A ChatGPT answer** ("Connect Qwen to coding agents" and "Verify tool calling") was the starting point for this project. The scripts were written from scratch against the tools' current versions; [docs/compatibility.md](docs/compatibility.md#differences-from-the-original-guide) lists where they differ from it.
 - **Benchmark tasks** in `bench/`, the tests in `tests/` and their reference solutions in `tests/fixtures/` were written for this project.

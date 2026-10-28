@@ -1,6 +1,6 @@
 # Models, memory and benchmarks
 
-Why the default model is KAT-Coder, how `./bin/serve-qwen` decides whether a model fits, and how the candidates compared. Settings named here are described in the [README](../README.md#settings).
+Why the default model is KAT-Coder, how `./bin/serve-qwen` decides whether a model fits, and how the candidates compared. Settings named here are described in the [README](../README.md#settings). To look for other models yourself, use `./bin/models` or `./bin/web-ui` ([README](../README.md#finding-and-serving-other-models)); they run the same memory estimate as the server.
 
 ## Memory budget
 
@@ -21,6 +21,7 @@ That rules out the model the [original guide](compatibility.md#differences-from-
 - **For each request** it rejects prompts that, with the reply, exceed the context window, and requests that would not fit in the GPU limit or in the memory free at that moment while leaving 1 GiB for macOS. The agent shows the error, which says how much was needed and what to do. mlx-lm reports these errors with HTTP status 404.
 - **For each request** it also picks the prefill step: the largest up to `QWEN_PREFILL_STEP` that fits, down to 16 tokens. Short prompts get 512 tokens per step; only long ones go smaller.
 - **For each request** it refuses any model, adapter or draft model other than the one it serves. mlx-lm would otherwise unload the served model and load, or download, the one named, outside every check.
+- **Codex's requests** go through the same checks: the server translates them into Chat Completions requests to itself ([how-it-works.md](how-it-works.md#how-codex-is-served)).
 - **While running**, a watchdog stops the server with a message when free memory falls to 0.5 GiB, for example because another application took it, or free disk to 1 GiB, before macOS starts to freeze. If the watchdog itself fails, it stops the server too.
 - **Downloads** check that the model's remaining size plus 5 GiB is free first, and the mlx-lm and agent installs want 6 GiB free. uv's and Hugging Face's caches live in `state/`, so these checks see them.
 
@@ -55,7 +56,7 @@ The server samples with `top_p=0.95, top_k=20, min_p=0.0` and a temperature of 0
 
 ## Other models that fit
 
-A survey on 2026-10-20 of MLX models whose loaded weights stay under 11.5 GiB, that mlx-lm 0.32.2 can run, and whose tool calls it can parse. The pruned Qwen3.6 model was the previous default and is benchmarked below; the other two have not been tried. Serve any of them with `QWEN_REPO` and `QWEN_REVISION`. Benchmark numbers are for the full-precision parent models, not these quantized builds.
+A survey on 2026-10-20 of MLX models whose loaded weights stay under 11.5 GiB, that mlx-lm 0.32.2 can run, and whose tool calls it can parse. The pruned Qwen3.6 model was the previous default and is benchmarked below; the other two have not been tried. Download any of them with `./bin/models download`, and serve it with `QWEN_REPO`, `QWEN_REVISION` and `QWEN_CONTEXT`. Benchmark numbers are for the full-precision parent models, not these quantized builds. For servers that run models faster than plain mlx-lm, see [alternatives.md](alternatives.md).
 
 | Model and commit | Loaded weights | Context cache per token | Parent's coding-agent scores | Caveat |
 |---|---|---|---|---|
@@ -78,7 +79,7 @@ Each run works on a fresh copy. When the agent finishes, tests it never saw (`be
 Serve one model, run `BENCH_RUNS=2 ./bin/bench-agents first-model`, stop the server, serve the next model and repeat with another label. Sampling is random, so one run per task says little. These settings shape a run:
 
 - `BENCH_RUNS`: runs of each task with each agent, 1 by default; use two or more.
-- `BENCH_AGENTS`: the agents to run, `opencode pi` by default.
+- `BENCH_AGENTS`: the agents to run, `opencode pi` by default; `codex` works too.
 - `BENCH_TASKS`: the tasks to run, every folder in `bench/` by default.
 - `BENCH_TIMEOUT`: seconds per run, 900 by default.
 

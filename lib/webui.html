@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>puny-local-ai</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a64; --line: #e3e1da;
+    --accent: #2f6f4f; --accent-ink: #ffffff; --warn: #9a5b00; --bad: #a1271b; --code: #f0eee8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9c9a92; --line: #33322d;
+      --accent: #6fbf8f; --accent-ink: #10130f; --warn: #e0a84a; --bad: #ef7d6f; --code: #2a2925;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  nav button { background: none; border: 0; color: var(--muted); font: inherit; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+  nav button[aria-selected="true"] { color: var(--ink); background: var(--bg); font-weight: 600; }
+  #status { margin-left: auto; font-size: 13px; color: var(--muted); }
+  #status b.ok { color: var(--accent); } #status b.off { color: var(--bad); }
+  main { max-width: 920px; margin: 0 auto; padding: 16px; }
+  section[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  input, select, textarea { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  textarea { width: 100%; resize: vertical; min-height: 70px; }
+  button.primary, button.secondary { font: inherit; border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-ink); }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > input[type=search] { flex: 1 1 240px; }
+  #log { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .msg { padding: 10px 14px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { background: var(--code); align-self: flex-end; max-width: 85%; }
+  .msg.assistant { background: var(--panel); border: 1px solid var(--line); }
+  .msg.error { color: var(--bad); border: 1px solid var(--bad); background: var(--panel); }
+  details.thinking { color: var(--muted); font-size: 13px; margin-bottom: 6px; white-space: pre-wrap; }
+  pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre; }
+  code { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .good { color: var(--accent); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>puny-local-ai</h1>
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-tab="chat">Chat</button>
+    <button role="tab" aria-selected="false" data-tab="models">Models</button>
+  </nav>
+  <div id="status">Checking the server…</div>
+</header>
+<main>
+  <section id="chat">
+    <div id="log"></div>
+    <form id="ask" class="card">
+      <textarea id="prompt" placeholder="Ask the local model. Enter sends, Shift+Enter adds a line." required></textarea>
+      <div class="row" style="margin-top:8px">
+        <label class="muted"><input type="checkbox" id="think" checked> Thinking</label>
+        <span style="flex:1"></span>
+        <button type="button" class="secondary" id="clear">New chat</button>
+        <button type="submit" class="primary" id="send">Send</button>
+      </div>
+    </form>
+    <p class="muted">Chat goes to the server that <code>./bin/serve-qwen</code> runs. Nothing leaves this Mac.</p>
+  </section>
+
+  <section id="models" hidden>
+    <form id="find" class="card">
+      <div class="row">
+        <input type="search" id="query" placeholder="Search MLX models, for example qwen3.6 coder" required>
+        <select id="source" aria-label="Source">
+          <option value="all">Hugging Face and ModelScope</option>
+          <option value="huggingface">Hugging Face</option>
+          <option value="modelscope">ModelScope</option>
+        </select>
+        <button class="primary">Search</button>
+      </div>
+      <p class="muted">Check a model to see whether it fits in the memory the GPU may use, and whether mlx-lm can parse its tool calls, which coding agents need. Downloads are pinned to a commit and checked against the source's hashes.</p>
+    </form>
+    <div id="detail"></div>
+    <div id="results"></div>
+    <div class="card"><h3 style="margin-top:0">Downloads</h3><div id="downloads" class="muted">None yet.</div></div>
+    <div class="card"><h3 style="margin-top:0">On this Mac</h3><div id="local" class="muted">Loading…</div></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const kid of kids) node.append(kid);
+  return node;
+};
+const gib = (b) => b == null ? "?" : (b / 2 ** 30).toFixed(2) + " GiB";
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || body.error || `HTTP ${response.status}`);
+  return body;
+}
+
+// ------------------------------------------------------------ tabs and status
+for (const tab of document.querySelectorAll("nav button")) {
+  tab.addEventListener("click", () => {
+    for (const other of document.querySelectorAll("nav button")) other.setAttribute("aria-selected", other === tab);
+    for (const section of document.querySelectorAll("main section")) section.hidden = section.id !== tab.dataset.tab;
+    if (tab.dataset.tab === "models") { refreshLocal(); refreshDownloads(); }
+  });
+}
+
+async function refreshStatus() {
+  const box = $("#status");
+  try {
+    const s = await api("/api/status");
+    box.replaceChildren(s.running
+      ? el("span", {}, el("b", {className: "ok", textContent: "● running "}),
+          `${s.model || "a model"}${s.window_tokens ? `, ${s.window_tokens.toLocaleString()}-token window` : ""}`)
+      : el("span", {}, el("b", {className: "off", textContent: "● stopped "}), `start ./bin/serve-qwen (${s.base_url})`));
+  } catch (e) { box.textContent = e.message; }
+}
+refreshStatus();
+setInterval(refreshStatus, 10000);
+
+// ------------------------------------------------------------ chat
+let history = [];
+
+function render(text, into) {
+  // Fenced code blocks become <pre>; everything else stays plain text.
+  into.replaceChildren();
+  text.split(/```[^\n]*\n?/).forEach((part, i) => {
+    into.append(i % 2 ? el("pre", {}, el("code", {textContent: part})) : document.createTextNode(part));
+  });
+}
+
+async function send(event) {
+  event.preventDefault();
+  const text = $("#prompt").value.trim();
+  if (!text) return;
+  $("#prompt").value = "";
+  history.push({role: "user", content: text});
+  $("#log").append(el("div", {className: "msg user", textContent: text}));
+  const thinking = el("details", {className: "thinking", hidden: true}, el("summary", {textContent: "Thinking"}));
+  const thoughts = el("div");
+  thinking.append(thoughts);
+  const answer = el("div");
+  const bubble = el("div", {className: "msg assistant"}, thinking, answer);
+  $("#log").append(bubble);
+  $("#send").disabled = true;
+  let content = "", reasoning = "";
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({messages: history, stream: true,
+        chat_template_kwargs: {enable_thinking: $("#think").checked}}),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error?.message || body.error || `HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+        const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta || {};
+        if (delta.reasoning) { reasoning += delta.reasoning; thinking.hidden = false; thoughts.textContent = reasoning; }
+        if (delta.content) { content += delta.content; render(content, answer); }
+      }
+      bubble.scrollIntoView({block: "end"});
+    }
+    history.push({role: "assistant", content});
+  } catch (e) {
+    bubble.className = "msg error";
+    answer.textContent = e.message;
+    history.pop();
+  } finally {
+    $("#send").disabled = false;
+    $("#prompt").focus();
+  }
+}
+$("#ask").addEventListener("submit", send);
+$("#prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#ask").requestSubmit(); }
+});
+$("#clear").addEventListener("click", () => { history = []; $("#log").replaceChildren(); });
+
+// ------------------------------------------------------------ models
+$("#find").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const box = $("#results");
+  box.replaceChildren(el("div", {className: "card muted", textContent: "Searching…"}));
+  try {
+    const {results, problems} = await api(`/api/search?q=${encodeURIComponent($("#query").value)}&source=${$("#source").value}`);
+    const table = el("table", {}, el("tr", {}, ...["Model", "Source", "Downloads", "Size", "Updated", ""].map((t) => el("th", {textContent: t}))));
+    for (const r of results) {
+      const check = el("button", {className: "secondary", textContent: "Check"});
+      check.addEventListener("click", () => showInfo(r.name));
+      table.append(el("tr", {},
+        el("td", {}, el("a", {href: r.url, target: "_blank", rel: "noopener", textContent: r.name.replace(/^modelscope:/, "")}),
+          r.task ? el("div", {className: "muted", textContent: r.task}) : ""),
+        el("td", {}, el("span", {className: "tag", textContent: r.source})),
+        el("td", {className: "num", textContent: (r.downloads || 0).toLocaleString()}),
+        el("td", {className: "num", textContent: gib(r.size_bytes)}),
+        el("td", {className: "num", textContent: (r.updated || "").slice(0, 10)}),
+        el("td", {}, check)));
+    }
+    box.replaceChildren(el("div", {className: "card scroll"},
+      results.length ? table : el("p", {className: "muted", textContent: "No MLX models match."}),
+      ...problems.map((p) => el("p", {className: "warn", textContent: p}))));
+  } catch (e) { box.replaceChildren(el("div", {className: "card bad", textContent: e.message})); }
+});
+
+async function showInfo(name) {
+  const box = $("#detail");
+  box.replaceChildren(el("div", {className: "card muted", textContent: `Reading ${name}…`}));
+  box.scrollIntoView({block: "start"});
+  try {
+    const i = await api(`/api/info?model=${encodeURIComponent(name)}`);
+    const fit = i.estimate_problem ? el("span", {className: "warn", textContent: i.estimate_problem})
+      : i.fits ? el("span", {className: "good", textContent: `fits: ${i.window_tokens.toLocaleString()} tokens of context within the ${gib(i.gpu_limit_bytes)} GPU limit`})
+      : el("span", {className: "bad", textContent: `does not fit: only ${(i.window_tokens || 0).toLocaleString()} tokens of context within the ${gib(i.gpu_limit_bytes)} GPU limit`});
+    const download = el("button", {className: "primary", textContent: i.downloaded ? "Downloaded" : `Download ${gib(i.download_bytes)}`, disabled: i.downloaded});
+    download.addEventListener("click", async () => {
+      download.disabled = true;
+      try { await api("/api/downloads", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({model: `${i.name}@${i.commit}`})}); refreshDownloads(); }
+      catch (e) { download.disabled = false; alertBox(e.message); }
+    });
+    box.replaceChildren(el("div", {className: "card"},
+      el("h3", {style: "margin-top:0", textContent: i.name}),
+      el("dl", {},
+        el("dt", {textContent: "Commit"}), el("dd", {}, el("code", {textContent: i.commit})),
+        el("dt", {textContent: "Weights"}), el("dd", {textContent: `${gib(i.weights_bytes)} loaded, ${gib(i.download_bytes)} download`}),
+        el("dt", {textContent: "Architecture"}), el("dd", {className: i.architecture_supported ? "good" : "bad",
+          textContent: `${i.model_type || "?"}${i.architecture_supported ? ", supported by mlx-lm" : ", not supported by mlx-lm 0.32.2"}`}),
+        el("dt", {textContent: "Tool calls"}), el("dd", {className: i.tool_parser ? "good" : "bad",
+          textContent: i.tool_parser ? `${i.tool_parser} parser` : "no parser found; coding agents cannot use it"}),
+        el("dt", {textContent: "Context"}), el("dd", {textContent: `${i.config_context_tokens ? i.config_context_tokens.toLocaleString() : "?"} tokens in config.json; check the model card`}),
+        el("dt", {textContent: "Memory"}), el("dd", {}, fit),
+        el("dt", {textContent: "Serve"}), el("dd", {}, el("code", {textContent: i.serve_command}))),
+      el("div", {className: "row"}, download, el("a", {href: i.url, target: "_blank", rel: "noopener", textContent: "Model card"}))));
+  } catch (e) { box.replaceChildren(el("div", {className: "card bad", textContent: e.message})); }
+}
+
+function alertBox(message) {
+  $("#detail").prepend(el("div", {className: "card bad", textContent: message}));
+}
+
+let polling = null;
+async function refreshDownloads() {
+  const jobs = await api("/api/downloads").catch(() => []);
+  const box = $("#downloads");
+  if (!jobs.length) { box.textContent = "None yet."; return; }
+  box.replaceChildren(...jobs.slice().reverse().map((j) => el("div", {style: "margin-bottom:10px"},
+    el("div", {}, el("b", {textContent: j.model}), " ",
+      el("span", {className: j.state === "done" ? "good" : j.state === "running" ? "warn" : "bad", textContent: j.state})),
+    el("pre", {}, el("code", {textContent: j.tail.trim().split("\n").slice(-6).join("\n")})))));
+  const running = jobs.some((j) => j.state === "running");
+  if (running && !polling) polling = setInterval(refreshDownloads, 3000);
+  if (!running && polling) { clearInterval(polling); polling = null; refreshLocal(); }
+}
+
+async function refreshLocal() {
+  const box = $("#local");
+  try {
+    const found = await api("/api/models");
+    if (!found.length) { box.textContent = "No models downloaded yet."; return; }
+    const table = el("table", {}, el("tr", {}, ...["Model", "Size", "State"].map((t) => el("th", {textContent: t}))));
+    for (const m of found) {
+      table.append(el("tr", {},
+        el("td", {}, m.name, el("div", {className: "muted"}, el("code", {textContent: m.commit}))),
+        el("td", {className: "num", textContent: gib(m.size_bytes)}),
+        el("td", {className: m.verified ? "good" : "warn", textContent: m.verified ? "verified" : "incomplete"})));
+    }
+    box.replaceChildren(el("div", {className: "scroll"}, table),
+      el("p", {className: "muted", textContent: "Serve one with QWEN_REPO, QWEN_REVISION and QWEN_CONTEXT, as Check shows. The presets kat, reap and small are served with QWEN_PRESET."}));
+  } catch (e) { box.textContent = e.message; }
+}
+</script>
+</body>
+</html>

@@ -14,7 +14,7 @@
 # given in ./bin/smoke-test.
 #
 # Settings:
-#   BENCH_AGENTS   agents to run, default "opencode pi"
+#   BENCH_AGENTS   agents to run, default "opencode pi"; codex works too
 #   BENCH_TASKS    tasks to run, default every folder in bench/
 #   BENCH_RUNS     runs of each task with each agent, default 1
 #   BENCH_TIMEOUT  seconds per run, default 900
@@ -70,9 +70,9 @@ label="$1"
 
 agents=()
 read -r -a agents <<< "${BENCH_AGENTS:-opencode pi}"
-[[ ${#agents[@]} -gt 0 ]] || die "BENCH_AGENTS names no agent; use opencode, pi or both"
+[[ ${#agents[@]} -gt 0 ]] || die "BENCH_AGENTS names no agent; use any of: ${RUN_AGENTS[*]}"
 for agent in "${agents[@]}"; do
-  [[ "$agent" == opencode || "$agent" == pi ]] || die "unknown agent '$agent' in BENCH_AGENTS; expected opencode or pi"
+  [[ " ${RUN_AGENTS[*]} " == *" $agent "* ]] || die "unknown agent '$agent' in BENCH_AGENTS; expected any of: ${RUN_AGENTS[*]}"
 done
 if [[ -n "${BENCH_TASKS:-}" ]]; then
   tasks=()
