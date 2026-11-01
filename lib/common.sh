@@ -1,7 +1,7 @@
 # shellcheck shell=bash disable=SC2034
 # Shared helpers for the launchers and checks. Source this file; do not run it.
 #
-# Settings (environment variables):
+# Settings come from the environment, then from puny.conf (see load_config):
 #   MLX_BASE_URL  OpenAI-compatible base URL of the running mlx_lm.server, in
 #                 the form http://HOST:PORT/v1. Defaults to
 #                 http://127.0.0.1:8081/v1, because 8080 is often taken by
@@ -15,6 +15,58 @@ die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
+
+# The settings puny.conf may hold; lib/config.py lists the same names with
+# their help, and the tests check that the two agree.
+CONFIG_SETTINGS=(MLX_BASE_URL QWEN_PRESET QWEN_REPO QWEN_REVISION QWEN_CONTEXT QWEN_MAX_OUTPUT QWEN_TEMP
+  QWEN_KV_BITS QWEN_PROMPT_CACHE_ENTRIES QWEN_PREFILL_STEP QWEN_MEMORY_MARGIN WEB_UI_URL SMOKE_TIMEOUT
+  BENCH_AGENTS BENCH_TASKS BENCH_RUNS BENCH_TIMEOUT TEAM_SOLVE_AGENT TEAM_SOLVE_TIMEOUT)
+# Which model to serve is one choice: when the environment names a model,
+# the file's model settings are all left out, so the two never mix.
+CONFIG_MODEL_SETTINGS=" QWEN_PRESET QWEN_REPO QWEN_REVISION QWEN_CONTEXT "
+
+# load_config exports each setting in PUNY_CONFIG (default puny.conf in the
+# repo) that the environment does not set. The file is parsed, never run:
+# one KEY=VALUE per line, # comments, and values taken literally apart from
+# one pair of surrounding quotes. lib/config.py writes it the same way.
+load_config() {
+  PUNY_CONFIG="${PUNY_CONFIG:-$PUNY_ROOT/puny.conf}"
+  # Where each setting came from, for ./bin/config show; the scripts fill in
+  # defaults later, so this is the only point where it can be told.
+  CONFIG_FROM_FILE=" "
+  CONFIG_FROM_ENV=" "
+  local line key value number=0 model_from_env=0 setting
+  for setting in "${CONFIG_SETTINGS[@]}"; do
+    # Each name is one of CONFIG_SETTINGS, so eval only ever sees a known name.
+    eval "[[ -n \${$setting+set} ]]" && CONFIG_FROM_ENV="$CONFIG_FROM_ENV$setting "
+  done
+  for setting in $CONFIG_MODEL_SETTINGS; do
+    [[ "$CONFIG_FROM_ENV" == *" $setting "* ]] && model_from_env=1
+  done
+  [[ -e "$PUNY_CONFIG" ]] || return 0
+  [[ -f "$PUNY_CONFIG" && -r "$PUNY_CONFIG" ]] || die "$PUNY_CONFIG is not a readable file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    number=$((number + 1))
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=(.*)$ ]] \
+      || die "$PUNY_CONFIG line $number is not KEY=VALUE: $line"
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    [[ " ${CONFIG_SETTINGS[*]} " == *" $key "* ]] \
+      || die "$PUNY_CONFIG line $number: $key is not a puny-local-ai setting; expected one of ${CONFIG_SETTINGS[*]}"
+    # Trims spaces, then removes one pair of matching quotes.
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ${#value} -ge 2 && ( "$value" == \"*\" || "$value" == \'*\' ) ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    [[ "$CONFIG_FROM_ENV" == *" $key "* ]] && continue
+    [[ $model_from_env == 1 && "$CONFIG_MODEL_SETTINGS" == *" $key "* ]] && continue
+    export "$key=$value"
+    CONFIG_FROM_FILE="$CONFIG_FROM_FILE$key "
+  done < "$PUNY_CONFIG"
+}
+load_config
 
 MLX_BASE_URL="${MLX_BASE_URL:-http://127.0.0.1:8081/v1}"
 MLX_BASE_URL="${MLX_BASE_URL%/}"
@@ -63,6 +115,16 @@ require_mlx_server() {
   body="${body%$'\n'*}"
   [[ "$status" == 200 && "$body" == *'"status": "ok"'* ]] \
     || die "$root/health returned HTTP $status ($body), which is not a healthy mlx_lm.server. Another service may own this port; check with: lsof -nP -iTCP -sTCP:LISTEN"
+}
+
+# Prints the address ./bin/web-ui listens on, WEB_UI_URL, after checking that
+# it is on this Mac: the page can start downloads and the server.
+web_ui_url() {
+  local url="${WEB_UI_URL:-http://127.0.0.1:8090}"
+  url="${url%/}"
+  [[ "$url" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})$ ]] \
+    || die "WEB_UI_URL must look like http://127.0.0.1:PORT; the page only listens on this Mac, not $url"
+  printf '%s\n' "$url"
 }
 
 # QWEN_CONTEXT is the context window. ./bin/serve-qwen defaults it to what the

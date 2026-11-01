@@ -16,9 +16,10 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 ## Layout
 
 - `bin/`: the commands people run. Each one starts by sourcing `lib/common.sh`.
-- `lib/common.sh`: settings shared by every script, `die`, and the server checks.
+- `lib/common.sh`: settings shared by every script, including reading `puny.conf`, `die`, and the server checks.
+- `lib/config.py`: writes `puny.conf` for `./bin/config` and the web UI, and holds each setting's help. A new setting goes in both its `SETTINGS` and `CONFIG_SETTINGS` in `lib/common.sh`.
 - `lib/mlx.sh`: the model presets, the mlx-lm environment and model downloads.
-- `lib/agents.sh`: the pinned OpenCode and Pi versions, and how to run OpenCode, Pi and Codex for the smoke test and the benchmark.
+- `lib/agents.sh`: the pinned OpenCode and Pi versions, and how to run OpenCode, Pi and Codex for the smoke test, the benchmark and `./bin/team-solve`.
 - `lib/mlx-lm.lock`: mlx-lm and its dependencies, with hashes.
 - `lib/serve.py`: runs mlx_lm.server behind the memory and disk guards, and adds the Responses API and its own `/v1/models`. It hooks into mlx-lm's server internals and refuses to run with any mlx-lm version other than the pinned one, so check it again when moving the pin.
 - `lib/responses.py`: translates the Responses API that Codex speaks into Chat Completions and back; [docs/how-it-works.md](docs/how-it-works.md#how-codex-is-served) describes it.
@@ -30,8 +31,10 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/integrate.py` and `lib/jsonc.py`: add the provider to the agents' own configs and remove it again, editing JSON and JSONC in place without touching anything else. `lib/integrate.py` also generates the config the launchers pass, so both always agree.
 - `tests/`: the test suite; see [Tests](#tests).
 - `bench/`: the benchmark tasks. Each has `start/` (the project the agent gets), `hidden/` (tests it never sees), `prompt.txt` and an optional `check` script.
+- `workflows/team-solve/`: the prompts and sample checker `./bin/team-solve` runs, adapted from Memdoor under Apache-2.0. Keep its `LICENSE`, `NOTICE` and `CHANGES.md` with it, and add any further change to `CHANGES.md`.
 - `docs/`: background that does not belong in the README. [docs/how-it-works.md](docs/how-it-works.md) holds the implementation details; keep the README to what users do.
 - `state/`: everything downloaded or produced at run time. It is ignored by git; delete it to start over.
+- `puny.conf`: the user's settings, also ignored by git. The tests never read the real one: each runs in a copy of the repo.
 
 ## Rules
 
@@ -41,7 +44,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - **Fail loudly.** Scripts stop with `die` and a message that says what went wrong and how to fix it. No silent fallbacks, guessed defaults or ignored errors.
 - **Never mix up bytes and tokens.** Every quantity says its unit: names end in `_bytes`, `_tokens`, `_pages` or `_layers`, settings say theirs in the docs, and messages print GiB or tokens. A context window is tokens; what it costs in memory is bytes, worked out in `lib/memory.py` and nowhere else.
 - **Never let the machine run out of memory or disk.** A change that can use more memory, such as a new model, a larger step or a new server flag, must keep the estimates in `lib/memory.py` at or above what it measures.
-- **Leave the user's own setup alone.** Only `./bin/integrate` writes to the agents' configs, only when asked, and only through `lib/integrate.py`, which backs files up, adds one entry, removes exactly that entry again, and refuses anything it did not add. Apart from that and the global npm installs that `./bin/install-agents` performs, nothing may write outside this repo and the system temp folder; uv's and Hugging Face's caches are pointed into `state/`. Nothing may need `sudo`.
+- **Leave the user's own setup alone.** Only `./bin/integrate` writes to the agents' configs, only when asked, and only through `lib/integrate.py`, which backs files up, adds one entry, removes exactly that entry again, and refuses anything it did not add. Apart from that and the global npm installs that `./bin/install-agents` performs, nothing may write outside this repo and the system temp folder. Inside the repo, only `./bin/config` and the web UI, through it, write `puny.conf`; uv's and Hugging Face's caches are pointed into `state/`. Nothing may need `sudo`.
 - **Run on a fresh Mac.** Scripts run with the bash and Python that macOS ships: bash 3.2 and, from Apple's command line tools, Python 3.9. So no `declare -A`, no `${x,,}`, no empty `"${array[@]}"` under `set -u`, and nothing newer than Python 3.9 in code run by `python3`, such as `datetime.UTC`. Code that runs in the mlx-lm environment (`lib/serve.py`, `lib/memory.py`, `lib/verify_model.py`) may use Python 3.14. The tests run every script with `/bin/bash` and `/usr/bin/python3` on the PATH, so they catch this.
 - **OpenCode 2 only.** Configs use the OpenCode 2 format; check the version with `require_opencode_2` before relying on it.
 - **Test every change.** New behavior comes with tests, and a fixed bug with a test that fails without the fix.

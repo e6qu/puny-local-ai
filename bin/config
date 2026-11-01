@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Shows and changes the settings in puny.conf, which every ./bin command reads.
+# An environment variable of the same name wins over the file.
+#
+#   ./bin/config                     every setting, its value and where it comes from
+#   ./bin/config show --json         the same, as JSON, for ./bin/web-ui
+#   ./bin/config set KEY=VALUE...    check the new values, then save them; an
+#                                    empty VALUE removes the setting
+#   ./bin/config unset KEY...        remove settings, so their defaults apply
+#   ./bin/config check               check the settings in effect
+#
+# set checks the file as it would be after the change, on its own, before it
+# saves anything: a value the scripts would refuse is never written.
+# PUNY_CONFIG names another file; the default is puny.conf in this repo.
+# lib/config.py describes the file format.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+# The checks every command makes on its settings: lib/common.sh made its own
+# when it was sourced above; these are the model, server, web UI and
+# team-solve ones.
+check() {
+  resolve_model_settings
+  web_ui_url >/dev/null
+  resolve_team_solve_settings
+}
+
+# Prints KEY, source (environment, puny.conf or default) and value, tab-separated.
+show() {
+  local key source value
+  check
+  for key in "${CONFIG_SETTINGS[@]}"; do
+    if [[ "$CONFIG_FROM_FILE" == *" $key "* ]]; then
+      source=puny.conf
+    elif [[ "$CONFIG_FROM_ENV" == *" $key "* ]]; then
+      source=environment
+    else
+      source=default
+    fi
+    eval "value=\"\${$key:-}\""
+    [[ "$key" == WEB_UI_URL ]] && value="$(web_ui_url)"
+    printf '%s\t%s\t%s\n' "$key" "$source" "$value"
+  done
+}
+
+# Writes the changes to a copy of the file, checks the copy with every setting
+# cleared from the environment, then puts it in place.
+change() {
+  local copy status=0 unset_args=() key
+  copy="$(mktemp "$(dirname "$PUNY_CONFIG")/.puny.conf.XXXXXX")"
+  if [[ -f "$PUNY_CONFIG" ]]; then
+    cp -p "$PUNY_CONFIG" "$copy"
+  else
+    rm -f "$copy"
+  fi
+  python3 -I "$PUNY_ROOT/lib/config.py" write "$copy" "$@" || status=$?
+  if [[ $status -eq 0 ]]; then
+    for key in "${CONFIG_SETTINGS[@]}"; do
+      unset_args+=(-u "$key")
+    done
+    env "${unset_args[@]}" PUNY_CONFIG="$copy" "$PUNY_ROOT/bin/config" check >/dev/null || status=$?
+  fi
+  if [[ $status -ne 0 ]]; then
+    rm -f "$copy"
+    die "nothing was saved"
+  fi
+  if [[ -f "$copy" ]]; then
+    mv "$copy" "$PUNY_CONFIG"
+  else
+    rm -f "$PUNY_CONFIG"
+  fi
+}
+
+command="${1:-show}"
+[[ $# -gt 0 ]] && shift
+case "$command" in
+  show)
+    if [[ "${1:-}" == --json ]]; then
+      show | python3 -I -c '
+import json, subprocess, sys
+help = {s["key"]: s for s in json.loads(subprocess.run([sys.executable, "-I", sys.argv[1], "describe"],
+                                                        check=True, capture_output=True, text=True).stdout)}
+rows = []
+for line in sys.stdin.read().splitlines():
+    key, source, value = line.split("\t", 2)
+    rows.append({"key": key, "source": source, "value": value, "group": help[key]["group"], "help": help[key]["help"]})
+print(json.dumps({"file": sys.argv[2], "settings": rows}))
+' "$PUNY_ROOT/lib/config.py" "$PUNY_CONFIG"
+    else
+      [[ $# -eq 0 ]] || die "usage: $PUNY_ROOT/bin/config show [--json]"
+      echo "Settings from $PUNY_CONFIG; the environment wins over the file."
+      show | awk -F'\t' '{ printf "  %-26s %-12s %s\n", $1, $2, ($3 == "" ? "-" : $3) }'
+    fi
+    ;;
+  set)
+    [[ $# -gt 0 ]] || die "usage: $PUNY_ROOT/bin/config set KEY=VALUE..."
+    for pair in "$@"; do
+      [[ "$pair" == *=* ]] || die "'$pair' is not KEY=VALUE"
+    done
+    # All in one change, checked as a whole: switching from QWEN_PRESET to
+    # QWEN_REPO is set QWEN_PRESET= QWEN_REPO=... QWEN_REVISION=... QWEN_CONTEXT=...
+    change "$@"
+    echo "Saved to $PUNY_CONFIG. Restart ./bin/serve-qwen for server settings, and run ./bin/integrate install again if the address, model or window changed."
+    ;;
+  unset)
+    [[ $# -gt 0 ]] || die "usage: $PUNY_ROOT/bin/config unset KEY..."
+    pairs=()
+    for key in "$@"; do
+      pairs+=("$key=")
+    done
+    change "${pairs[@]}"
+    echo "Removed from $PUNY_CONFIG: $*"
+    ;;
+  check)
+    check
+    echo "OK: the settings in effect are valid."
+    ;;
+  *) die "usage: $PUNY_ROOT/bin/config [show [--json] | set KEY=VALUE... | unset KEY... | check]" ;;
+esac

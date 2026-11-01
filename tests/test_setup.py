@@ -10,6 +10,16 @@ PRESETS = {
     "kat": ("mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B", "b33dfde62c2753841aa2b1662529bf7f3b1fdde5"),
     "reap": ("mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit-REAP-19B", "95193a560399d81cd6272c393db8e96d59f54f50"),
     "small": ("mlx-community/Qwen3.5-4B-4bit", "0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"),
+    "kat-full": ("mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit", "57c6e8372737f8a04aca1c210c926b8aa29c802e"),
+    "qwen38-4": ("mlx-community/Qwen3.8-27B-4bit", "10c35caafbb80f7dc6a7a432cdd11af10a6d4818"),
+    "qwen38": ("mlx-community/Qwen3.8-27B-8bit", "815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9"),
+    "coder-next": ("mlx-community/Qwen3-Coder-Next-4bit", "7b9321eabb85ce79625cac3f61ea691e4ea984b5"),
+    "coder-next-8": ("NexVeridian/Qwen3-Coder-Next-8bit", "fbc85334e685d0dd84fa221cc282ebcb6360a478"),
+}
+# Each preset's temperature and top_k, as lib/mlx.sh cites them from the model cards.
+SAMPLING = {
+    "kat": ("0.8", "20"), "reap": ("0.6", "20"), "small": ("0.6", "20"), "kat-full": ("0.8", "20"),
+    "qwen38-4": ("1.0", "20"), "qwen38": ("1.0", "20"), "coder-next": ("1.0", "40"), "coder-next-8": ("1.0", "40"),
 }
 
 # df output with 1 MiB free, for the disk checks.
@@ -110,10 +120,10 @@ class MlxLibTest(unittest.TestCase):
     def test_presets_are_pinned_to_full_commits(self):
         for preset, (repo, revision) in PRESETS.items():
             with self.subTest(preset):
-                out = bash(self.box, f'preset_info {preset}; echo "$preset_repo $preset_revision $preset_context $preset_temp $preset_upstream"')
-                repo_out, rev, context, temp, upstream = out.stdout.split()
+                out = bash(self.box, f'preset_info {preset}; echo "$preset_repo $preset_revision $preset_context $preset_temp $preset_top_k $preset_upstream"')
+                repo_out, rev, context, temp, top_k, upstream = out.stdout.split()
                 self.assertEqual((repo_out, rev, context), (repo, revision, "262144"))
-                self.assertEqual(temp, "0.8" if preset == "kat" else "0.6")
+                self.assertEqual((temp, top_k), SAMPLING[preset])
                 self.assertRegex(upstream, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
 
     def test_unknown_preset(self):
@@ -284,26 +294,27 @@ class SetupTest(unittest.TestCase):
         self.assertIn("usage:", self.setup_cmd("--one").stderr)
 
     def test_menu(self):
-        result = self.setup_cmd(tty_input="6\n")
+        result = self.setup_cmd(tty_input="11\n")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("What should be installed?", result.stdout)
-        self.assertIn("6) pi", result.stdout)
+        self.assertIn("11) pi", result.stdout)
+        self.assertIn("9) coder-next-8", result.stdout)
         self.assertEqual(self.box.called("install-agents"), ["install-agents pi"])
 
     def test_menu_defaults(self):
         result = self.setup_cmd(tty_input="\n")
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("[1 2 5 6]", result.stdout)
+        self.assertIn("[1 2 10 11]", result.stdout)
         self.assertIn("== kat", result.stdout)
         self.assertEqual(self.box.called("install-agents"), ["install-agents opencode", "install-agents pi"])
         self.assertEqual(self.box.called("python"), [], "kat is already verified, so nothing is downloaded")
 
     def test_menu_rejects_bad_numbers(self):
-        for answer in ("9", "0", "08", "x"):
+        for answer in ("12", "0", "08", "x"):
             with self.subTest(answer):
                 result = self.setup_cmd(tty_input=answer + "\n")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(f"'{answer}' is not a number from 1 to 6", result.stdout)
+                self.assertIn(f"'{answer}' is not a number from 1 to 11", result.stdout)
                 self.assertNotIn("value too great", result.stdout)
 
 
@@ -489,8 +500,10 @@ class ServeQwenTest(unittest.TestCase):
         self.serve({"QWEN_PRESET": "small", "QWEN_CONTEXT": "65536", "QWEN_KV_BITS": "4", "QWEN_TEMP": "0.2"})
         self.assertIn("Qwen3.5-4B-4bit", self.value("--model-dir"))
         self.assertEqual([self.value(o) for o in ("--context", "--kv-bits", "--temp")], ["65536", "4", "0.2"])
-        self.serve({"QWEN_PRESET": "reap"})
-        self.assertEqual(self.value("--temp"), "0.6")
+        for preset, (temp, top_k) in SAMPLING.items():
+            with self.subTest(preset):
+                self.assertEqual(self.serve({"QWEN_PRESET": preset}).returncode, 0)
+                self.assertEqual((self.value("--temp"), self.value("--top-k")), (temp, top_k))
 
     def test_any_model_at_a_commit(self):
         self.box.fake_model("org/model", "2" * 40)
@@ -539,7 +552,7 @@ class LicensesTest(unittest.TestCase):
         card = b"---\nlicense: apache-2.0\nlanguage: en\n---\n# Model\n"
         self.hf = FakeServer({})
         self.addCleanup(self.hf.stop)
-        for preset in ("kat", "reap", "small"):
+        for preset in PRESETS:
             out = bash(self.box, f'preset_info {preset}; echo "$preset_repo $preset_revision $preset_upstream"').stdout.split()
             for repo, rev in ((out[0], out[1]), tuple(out[2].split("@"))):
                 self.hf.routes[f"GET /{repo}/raw/{rev}/README.md"] = (200, card)
@@ -554,6 +567,13 @@ class LicensesTest(unittest.TestCase):
         self.assertIn("| mlx-lm | 0.32.2 | MIT |", result.stdout)
         self.assertIn("| @opencode/cli | 2.1.1 | MIT | https://github.com/example/@opencode/cli.git |", result.stdout)
         self.assertRegex(result.stdout, r"\| kat \| \[mlx-community/KAT-Coder.*\| apache-2.0 \| .*\| apache-2.0 \|")
+
+    def test_cards_with_windows_line_endings(self):
+        kat = PRESETS["kat"]
+        self.hf.routes[f"GET /{kat[0]}/raw/{kat[1]}/README.md"] = (200, b"---\r\nlibrary_name: mlx\r\nlicense: mit\r\n---\r\n# Model\r\n")
+        result = self.licenses()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"\| kat \| [^|]+\| mit \|")
 
     def test_missing_card_and_missing_license_line(self):
         small_repo = PRESETS["small"]

@@ -25,9 +25,11 @@
 #                             agents never reuse them; see docs/models.md).
 #                             The memory check budgets each at the full
 #                             QWEN_CONTEXT.
-#   QWEN_TEMP                 Sampling temperature. Defaults to 0.8 for kat,
-#                             which passed 12 of 12 benchmark runs at 0.8,
-#                             and to 0.6 for every other model.
+#   QWEN_TEMP                 Sampling temperature. Defaults to the preset's:
+#                             0.8 for kat and kat-full (kat passed 12 of 12
+#                             benchmark runs at 0.8), 1.0 for qwen38-4,
+#                             qwen38, coder-next and coder-next-8 (their
+#                             model cards), and 0.6 for every other model.
 #   QWEN_PREFILL_STEP         The most prompt tokens processed per step
 #                             (default 512). Each request uses the largest
 #                             step up to this that fits in memory; long
@@ -53,9 +55,10 @@ guard_args
 args=(
   --host "$MLX_HOST" --port "$MLX_PORT"
   --max-tokens "$QWEN_MAX_OUTPUT"
-  # Qwen3.6 model card, "thinking mode for precise coding tasks", apart from
-  # the temperature, which is per preset (see QWEN_TEMP).
-  --temp "$QWEN_TEMP" --top-p 0.95 --top-k 20 --min-p 0.0
+  # top_p=0.95 is what every preset's model card recommends, and min_p=0 turns
+  # min_p off; the temperature (QWEN_TEMP) and top_k come from the preset,
+  # with their sources in lib/mlx.sh.
+  --temp "$QWEN_TEMP" --top-p 0.95 --top-k "$preset_top_k" --min-p 0.0
 )
 
 echo "Starting $QWEN_REPO at temperature $QWEN_TEMP at $MLX_BASE_URL (clients send the model name default_model)"

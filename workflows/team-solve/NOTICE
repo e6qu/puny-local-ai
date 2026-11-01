@@ -1,0 +1,12 @@
+The prompts and the sample checker in this folder are adapted from Memdoor's
+team-solve workflow, examples/workflows/team-solve at commit
+cee3ca70ff62acf3018cedea8b7b3b742c597682 of https://github.com/guregodevo/memdoor,
+licensed under the Apache License, Version 2.0 (LICENSE in this folder).
+CHANGES.md lists what was changed.
+
+Memdoor's NOTICE file reads:
+
+Memdoor
+Copyright 2026 Gregory Desvaux
+
+Licensed under the Apache License, Version 2.0.

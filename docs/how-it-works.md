@@ -1,6 +1,6 @@
 # How it works
 
-Implementation details for people who want to know what runs, or want to change it. The [README](../README.md) covers using it; [CONTRIBUTING.md](../CONTRIBUTING.md#layout) maps the files.
+Implementation details for people who want to know what runs, or want to change it. Sections: [the server](#the-server), [how Codex is served](#how-codex-is-served), [settings](#settings), [where models come from](#where-models-come-from) and [the web UI](#the-web-ui). The [README](../README.md) covers using it; [CONTRIBUTING.md](../CONTRIBUTING.md#layout) maps the files.
 
 ## The server
 
@@ -41,6 +41,17 @@ What it does with the reply:
 
 The translation keeps no state between requests: Codex sends the whole conversation each time, with `store: false`. The [Codex source at 0.163.0](https://github.com/openai/codex/tree/83086188ae0614bd882818ff1aa23f3194962012/codex-rs) defines the request (`codex-api/src/common.rs`) and the events it reads (`codex-api/src/sse/responses.rs`). `./bin/check-responses-api` and `./bin/smoke-test codex` check the translation against the running server.
 
+## Settings
+
+Every command sources [`lib/common.sh`](../lib/common.sh), whose `load_config` reads `puny.conf` before anything else:
+
+- **The file is parsed, never run.** Each line must be blank, a `#` comment or `KEY=VALUE` with a known key; anything else stops the command with the line number. Values are taken literally, apart from one pair of surrounding quotes, so `$(...)` in a value is just text.
+- **The environment wins.** A key is exported from the file only when the environment does not set it.
+- **The model is one choice.** When the environment sets any of `QWEN_PRESET`, `QWEN_REPO`, `QWEN_REVISION` or `QWEN_CONTEXT`, the file's values for all four are skipped. Otherwise `QWEN_PRESET=small` in the environment would meet a `QWEN_REPO` from the file and be refused, or the file's context window would apply to another model.
+- `load_config` records which settings came from the environment and which from the file, before the scripts fill in defaults. `./bin/config show` reports those sources.
+
+[`lib/config.py`](../lib/config.py) writes the file. It replaces changed lines in place, keeps comments and order, and replaces the whole file in one step. `./bin/config set` first writes the change to a copy and runs `./bin/config check` on the copy with every setting cleared from the environment. That check runs the same validation the scripts run: the address forms, numbers, presets, the model choice and the web UI address. The copy replaces `puny.conf` only if the check passes. The names a file may hold are listed in both `lib/common.sh` and `lib/config.py`, and a test checks that the two lists agree.
+
 ## Where models come from
 
 [`lib/sources.py`](../lib/sources.py) knows two sources, and both can pin a model to a commit:
@@ -73,13 +84,16 @@ Every download, from either source and through any command, goes the same way. `
 
 ## The web UI
 
-`./bin/web-ui` runs [`lib/webui.py`](../lib/webui.py) in the mlx-lm environment. It serves one page, [`lib/webui.html`](../lib/webui.html), plain HTML and JavaScript with nothing loaded from elsewhere, and a JSON API:
+`./bin/web-ui` runs [`lib/webui.py`](../lib/webui.py) in the mlx-lm environment. It serves one page, [`lib/webui.html`](../lib/webui.html), plain HTML and JavaScript with nothing loaded from elsewhere, and a JSON API. Every change it makes goes through the same commands as the terminal:
 
+- **Settings** are read and saved through `./bin/config`, which checks them before it writes `puny.conf`. The page reads them again for every request, so it notices a change made in the terminal, such as a new `MLX_BASE_URL`. `./bin/web-ui` removes the values it loaded from `puny.conf` from its own environment before it starts. Otherwise they would count as environment variables for the commands it runs, and win over the file the page edits.
+- **The server** is started by running `./bin/serve-qwen` in its own session, with its output in `state/logs/serve-qwen.log`, so it keeps running when the page stops. **Stop** looks up every server this repo recorded in `state/served/`, checks that the process is this repo's `lib/serve.py`, sends it SIGTERM and waits up to 30 seconds. So it also stops a server started in a terminal, or one still on an old port after the address changed. The status shows "starting" while the model loads, and the exit status and log when the server refuses to start, for example because too little memory is free.
+- **Update agent configs** runs `./bin/integrate install` and shows its output.
 - **Chat** requests go to the page's own server, which passes them to `MLX_BASE_URL` with the model name set to `default_model` and streams the reply back. The browser never talks to the model server directly.
 - **Search, info and the downloaded list** call `lib/models.py`.
 - **Downloads** run `./bin/models download MODEL@COMMIT`, one at a time, with the same pinning, disk checks and verification as the command line. Logs go to `state/downloads/`. The page accepts only a model pinned to a full commit, the one Check showed.
 
-Because the page can start downloads, it guards against other web sites:
+Because the page can change settings, start the server and start downloads, it guards against other web sites:
 
 - It listens only on a loopback address; `./bin/web-ui` refuses any other `WEB_UI_URL`.
 - It answers only requests whose `Host` header names that address, which stops DNS rebinding.

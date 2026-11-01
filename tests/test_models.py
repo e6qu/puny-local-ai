@@ -3,6 +3,7 @@
 import hashlib
 import http.server
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -209,10 +210,16 @@ class WebUiTest(unittest.TestCase):
         self.box = Sandbox()
         self.addCleanup(self.box.cleanup)
         record_served(self.box, self.mlx.base_url, 65536)
+        (self.box.root / "puny.conf").write_text(f"MLX_BASE_URL={self.mlx.base_url}\n")
+        # The commands the page runs see only the sandbox's environment.
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ.clear()
+        os.environ.update(self.box.env())
         self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a: None)
         self.origin = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        self.httpd.RequestHandlerClass = webui.make_handler(self.origin, self.mlx.base_url, self.box.root,
-                                                            webui.Downloads(self.box.root))
+        self.httpd.RequestHandlerClass = webui.make_handler(self.origin, self.box.root, webui.Downloads(self.box.root),
+                                                            webui.Server(self.box.root))
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
@@ -232,7 +239,7 @@ class WebUiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("<title>puny-local-ai</title>", text)
         status, text = self.call("/api/status")
-        self.assertEqual(json.loads(text)["running"], True)
+        self.assertEqual(json.loads(text)["state"], "running")
         self.assertEqual(json.loads(text)["window_tokens"], 65536)
 
     def test_chat_is_passed_through_as_default_model(self):

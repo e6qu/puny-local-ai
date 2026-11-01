@@ -14,11 +14,11 @@ PYTHON_VERSION="3.14.6"
 export UV_CACHE_DIR="$PUNY_ROOT/state/cache/uv"
 export UV_PYTHON_INSTALL_DIR="$PUNY_ROOT/state/python"
 export HF_HOME="$PUNY_ROOT/state/cache/huggingface"
-MODEL_PRESETS=(kat reap small)
+MODEL_PRESETS=(kat reap small kat-full qwen38-4 qwen38 coder-next coder-next-8)
 MLX_ENV_DIR="$PUNY_ROOT/state/mlx-env"
 MLX_LOCK="$PUNY_ROOT/lib/mlx-lm.lock"
 
-# preset_info NAME sets preset_repo, preset_revision, preset_temp,
+# preset_info NAME sets preset_repo, preset_revision, preset_temp, preset_top_k,
 # preset_context (the context window its model card states), preset_about
 # and preset_upstream (the original model it was converted from,
 # as REPO@COMMIT) for one of MODEL_PRESETS; ./bin/licenses reads the licenses of
@@ -30,6 +30,7 @@ preset_info() {
       preset_repo="mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B"
       preset_revision="b33dfde62c2753841aa2b1662529bf7f3b1fdde5"
       preset_temp="0.8"
+      preset_top_k="20"
       # "maximum context length 262,144 tokens":
       # https://huggingface.co/Kwaipilot/KAT-Coder-V2.5-Dev/blob/7be56fe773e72b6f5ca93c1ae45d828ddb893922/README.md?code=true#L218
       preset_context="262144"
@@ -40,6 +41,7 @@ preset_info() {
       preset_repo="mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit-REAP-19B"
       preset_revision="95193a560399d81cd6272c393db8e96d59f54f50"
       preset_temp="0.6"
+      preset_top_k="20"
       # "Context Length: 262,144 natively":
       # https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/995ad96eacd98c81ed38be0c5b274b04031597b0/README.md?code=true#L55
       preset_context="262144"
@@ -50,17 +52,71 @@ preset_info() {
       preset_repo="mlx-community/Qwen3.5-4B-4bit"
       preset_revision="0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
       preset_temp="0.6"
+      preset_top_k="20"
       # "Context Length: 262,144 natively":
       # https://huggingface.co/Qwen/Qwen3.5-4B/blob/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a/README.md?code=true#L64
       preset_context="262144"
       preset_about="Qwen3.5-4B, for quick tests (2.8 GiB download)"
       preset_upstream="Qwen/Qwen3.5-4B@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
       ;;
+    # The presets below are for Macs whose GPU may use more than 16 GiB;
+    # docs/models.md#presets-for-larger-macs lists what each needs.
+    kat-full)
+      preset_repo="mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit"
+      preset_revision="57c6e8372737f8a04aca1c210c926b8aa29c802e"
+      preset_temp="0.8"
+      preset_top_k="20"
+      # "maximum context length 262,144 tokens":
+      # https://huggingface.co/Kwaipilot/KAT-Coder-V2.5-Dev/blob/7be56fe773e72b6f5ca93c1ae45d828ddb893922/README.md?code=true#L218
+      preset_context="262144"
+      preset_about="KAT-Coder unpruned, for a GPU limit of 22.5 GiB or more (20.4 GiB download)"
+      preset_upstream="Kwaipilot/KAT-Coder-V2.5-Dev@7be56fe773e72b6f5ca93c1ae45d828ddb893922"
+      ;;
+    qwen38-4 | qwen38)
+      if [[ "$1" == qwen38-4 ]]; then
+        preset_repo="mlx-community/Qwen3.8-27B-4bit"
+        preset_revision="10c35caafbb80f7dc6a7a432cdd11af10a6d4818"
+        preset_about="Qwen3.8-27B at 4 bits, for a GPU limit of 18.0 GiB or more (15.0 GiB download)"
+      else
+        preset_repo="mlx-community/Qwen3.8-27B-8bit"
+        preset_revision="815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9"
+        preset_about="Qwen3.8-27B at 8 bits, for a GPU limit of 30.6 GiB or more (27.5 GiB download)"
+      fi
+      # "Thinking Mode: temperature=1.0, top_p=0.95, top_k=20, min_p=0.0":
+      # https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md?code=true#L252
+      preset_temp="1.0"
+      preset_top_k="20"
+      # "Context Length: 262,144 natively":
+      # https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md?code=true#L53
+      preset_context="262144"
+      preset_upstream="Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+      ;;
+    coder-next | coder-next-8)
+      if [[ "$1" == coder-next ]]; then
+        preset_repo="mlx-community/Qwen3-Coder-Next-4bit"
+        preset_revision="7b9321eabb85ce79625cac3f61ea691e4ea984b5"
+        preset_about="Qwen3-Coder-Next at 4 bits, for a GPU limit of 43.9 GiB or more (41.8 GiB download)"
+      else
+        preset_repo="NexVeridian/Qwen3-Coder-Next-8bit"
+        preset_revision="fbc85334e685d0dd84fa221cc282ebcb6360a478"
+        preset_about="Qwen3-Coder-Next at 8 bits, for a GPU limit of 81.0 GiB or more (78.8 GiB download)"
+      fi
+      # "we recommend the following sampling parameters: temperature=1.0,
+      # top_p=0.95, top_k=40":
+      # https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md?code=true#L194
+      preset_temp="1.0"
+      preset_top_k="40"
+      # "Context Length: 262,144 natively":
+      # https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md?code=true#L44
+      preset_context="262144"
+      preset_upstream="Qwen/Qwen3-Coder-Next@a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb"
+      ;;
     *) die "unknown model preset '$1'; expected ${MODEL_PRESETS[*]}" ;;
   esac
 }
 
 # resolve_model_settings sets QWEN_REPO, QWEN_REVISION, QWEN_CONTEXT, QWEN_TEMP,
+# preset_top_k (the model card's top_k, not a setting),
 # QWEN_KV_BITS, QWEN_PROMPT_CACHE_ENTRIES, QWEN_MEMORY_MARGIN and
 # QWEN_PREFILL_STEP from the environment and the preset, and checks them.
 # ./bin/serve-qwen and ./bin/integrate both use it, so they describe the same
@@ -73,6 +129,7 @@ resolve_model_settings() {
     [[ -n "$QWEN_CONTEXT" ]] \
       || die "set QWEN_CONTEXT with QWEN_REPO, to the context window its model card states"
     preset_temp="0.6"
+    preset_top_k="20"
     preset_context="$QWEN_CONTEXT"
   else
     preset_info "${QWEN_PRESET:-kat}"

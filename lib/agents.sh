@@ -37,6 +37,18 @@ run_agent() {
   esac
 }
 
+# resolve_team_solve_settings sets TEAM_SOLVE_AGENT (default pi) and
+# TEAM_SOLVE_TIMEOUT (seconds per step, default 600) and checks them.
+# ./bin/team-solve and ./bin/config check both use it.
+resolve_team_solve_settings() {
+  TEAM_SOLVE_AGENT="${TEAM_SOLVE_AGENT:-pi}"
+  [[ " ${RUN_AGENTS[*]} " == *" $TEAM_SOLVE_AGENT "* ]] \
+    || die "TEAM_SOLVE_AGENT must be one of: ${RUN_AGENTS[*]}; it is '$TEAM_SOLVE_AGENT'"
+  TEAM_SOLVE_TIMEOUT="${TEAM_SOLVE_TIMEOUT:-600}"
+  [[ "$TEAM_SOLVE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] \
+    || die "TEAM_SOLVE_TIMEOUT must be a positive whole number of seconds"
+}
+
 # Exits unless OpenCode 2.0 or later is installed. The configs this project
 # writes use the OpenCode 2 format (providers, package, settings, modelID),
 # which OpenCode 1 does not read.
