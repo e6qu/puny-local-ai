@@ -14,7 +14,7 @@ PYTHON_VERSION="3.14.6"
 export UV_CACHE_DIR="$PUNY_ROOT/state/cache/uv"
 export UV_PYTHON_INSTALL_DIR="$PUNY_ROOT/state/python"
 export HF_HOME="$PUNY_ROOT/state/cache/huggingface"
-MODEL_PRESETS=(kat reap small kat-full qwen38-4 qwen38 coder-next coder-next-8)
+MODEL_PRESETS=(kat reap small kat-full qwen38-4 qwen38 coder-next coder-next-8 glimmer-4 glimmer)
 MLX_ENV_DIR="$PUNY_ROOT/state/mlx-env"
 MLX_LOCK="$PUNY_ROOT/lib/mlx-lm.lock"
 
@@ -110,6 +110,25 @@ preset_info() {
       # https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md?code=true#L44
       preset_context="262144"
       preset_upstream="Qwen/Qwen3-Coder-Next@a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb"
+      ;;
+    glimmer-4 | glimmer)
+      if [[ "$1" == glimmer-4 ]]; then
+        preset_repo="mlx-community/Muse-Glimmer-30B-4bit"
+        preset_revision="3e7677d7a40d348a3daba263a2b1c0aa41910710"
+        preset_about="Meta's Muse Glimmer at 4 bits, for a GPU limit of 20.0 GiB or more (18.1 GiB download)"
+      else
+        preset_repo="mlx-community/Muse-Glimmer-30B-8bit"
+        preset_revision="679c45e1b331a6514a6e38076a353cc5fed21bf6"
+        preset_about="Meta's Muse Glimmer at 8 bits, for a GPU limit of 33.0 GiB or more (31.1 GiB download)"
+      fi
+      # "temperature = 1.0, top_p = 0.95, top_k = 64":
+      # https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/README.md?code=true#L125-L129
+      preset_temp="1.0"
+      preset_top_k="64"
+      # "Sequence length | 131,072":
+      # https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/README.md?code=true#L73
+      preset_context="131072"
+      preset_upstream="meta-models/Muse-Glimmer-30B@cec94fcfd6512f2cfe708138c32533b346ea4f69"
       ;;
     *) die "unknown model preset '$1'; expected ${MODEL_PRESETS[*]}" ;;
   esac

@@ -30,7 +30,7 @@ from pathlib import Path
 # keeps the same names in CONFIG_SETTINGS; the tests check that they agree.
 SETTINGS = [
     ("MLX_BASE_URL", "server", "Where the model server listens and the agents connect: http://HOST:PORT/v1."),
-    ("QWEN_PRESET", "model", "A pinned model: kat (default), reap, small, or for larger Macs kat-full, qwen38-4, qwen38, coder-next or coder-next-8. Leave empty when QWEN_REPO is set."),
+    ("QWEN_PRESET", "model", "A pinned model: kat (default), reap, small, or for larger Macs kat-full, qwen38-4, qwen38, coder-next, coder-next-8, glimmer-4 or glimmer. Leave empty when QWEN_REPO is set."),
     ("QWEN_REPO", "model", "Any other model, as ./bin/models names it. Needs QWEN_REVISION and QWEN_CONTEXT."),
     ("QWEN_REVISION", "model", "The full 40-character commit of QWEN_REPO."),
     ("QWEN_CONTEXT", "model", "The context window in tokens. Defaults to the preset's model card; required with QWEN_REPO."),

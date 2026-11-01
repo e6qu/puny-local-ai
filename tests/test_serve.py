@@ -6,6 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 
 from helpers import REPO
 from test_memory import KAT
@@ -312,6 +313,106 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.fetch("/v1/nothing", {})[0], 404)
 
 
+class SlidingCacheTest(unittest.TestCase):
+    """The hook that keeps sliding-window layers at 16 bits, on mlx-lm's real caches."""
+
+    def setUp(self):
+        self.addCleanup(setattr, serve.generate, "maybe_quantize_kv_cache", serve.generate.maybe_quantize_kv_cache)
+
+    @staticmethod
+    def filled(cache, tokens):
+        keys = serve.mx.zeros((1, 2, tokens, 128), dtype=serve.mx.bfloat16)
+        cache.update_and_fetch(keys, keys)
+        return cache
+
+    def caches(self):
+        from mlx_lm.models.cache import KVCache
+
+        return [self.filled(serve.RotatingKVCache(max_size=2048), 6000), self.filled(KVCache(), 6000),
+                self.filled(KVCache(), 100)]
+
+    def test_mlx_lm_alone_fails_on_a_sliding_layer(self):
+        # If this starts passing, mlx-lm learned to quantize these caches and the hook can go.
+        with self.assertRaises(NotImplementedError):
+            serve.generate.maybe_quantize_kv_cache(self.caches(), 5000, 64, 8)
+
+    def test_only_full_attention_layers_past_the_threshold_are_quantized(self):
+        from mlx_lm.models.cache import KVCache, QuantizedKVCache
+
+        serve.keep_sliding_layers_unquantized()
+        caches = self.caches()
+        serve.generate.maybe_quantize_kv_cache(caches, 5000, 64, 8)
+        self.assertEqual([type(c) for c in caches], [serve.RotatingKVCache, QuantizedKVCache, KVCache])
+        self.assertEqual(caches[1].bits, 8)
+        self.assertEqual(caches[1].group_size, 64)
+        untouched = self.caches()
+        serve.generate.maybe_quantize_kv_cache(untouched, 5000, 64, None)
+        self.assertEqual([type(c) for c in untouched], [serve.RotatingKVCache, KVCache, KVCache])
+
+
+class GlimmerRepliesTest(unittest.TestCase):
+    """Muse Glimmer's replies, read with mlx-lm's own loader and state machine."""
+
+    def setUp(self):
+        had = hasattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS")
+        self.addCleanup(lambda: had or (hasattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS")
+                                        and delattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS")))
+
+    def defaults_for_a_glimmer_checkpoint(self):
+        from mlx_lm import utils
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "config.json").write_text('{"model_type": "muse_glimmer"}')
+            return utils._tokenizer_defaults(Path(d))
+
+    @staticmethod
+    def read(reply):
+        """The reasoning, text and tool-call text the server collects from `reply`."""
+        from mlx_lm.chat_templates import muse_spark
+        from mlx_lm.generate import TextStateMachine, make_text_state_machine
+        from mlx_lm.tool_parsers import muse_spark as parser
+
+        tokenizer = types.SimpleNamespace(
+            has_thinking=False, has_tool_calling=True, structural_markers=(),
+            tool_call_start=parser.tool_call_start, tool_call_end=parser.tool_call_end,
+            response_transitions=muse_spark.RESPONSE_FORMAT["transitions"])
+        machine = make_text_state_machine(tokenizer)
+        state = machine.make_state(initial=muse_spark.RESPONSE_FORMAT["initial_state"])
+        out = {"reasoning": "", "normal": "", "tool": ""}
+        # A few characters at a time, as tokens arrive.
+        for i in range(0, len(reply), 3):
+            state, segments = TextStateMachine.split(state, reply[i:i + 3])
+            for name, text in segments:
+                out[name] = out.get(name, "") + text
+        return out["reasoning"], out["normal"], out["tool"]
+
+    def test_mlx_lm_alone_gives_glimmer_no_reply_format(self):
+        # If this fails, mlx-lm learned Glimmer's format and the hook can go.
+        self.assertIsNone(self.defaults_for_a_glimmer_checkpoint())
+
+    def test_glimmer_gets_the_muse_spark_format(self):
+        serve.read_glimmer_replies_like_muse_spark()
+        self.assertEqual(self.defaults_for_a_glimmer_checkpoint(), {"chat_template_type": "muse_spark"})
+
+    def test_reasoning_and_headers_are_kept_out_of_the_text(self):
+        reasoning, text, tool = self.read(
+            " to=self<|message|>Read it first.<|eom|><|start|>assistant to=read<|message|>"
+            '<atem:function_calls>\n<atem:invoke name="read">\n<atem:parameter name="path">a.md</atem:parameter>\n'
+            "</atem:invoke>\n</atem:function_calls>")
+        self.assertEqual(reasoning, "Read it first.")
+        self.assertEqual(text, "")
+        from mlx_lm.tool_parsers import muse_spark as parser
+        self.assertEqual(parser.parse_tool_call(tool), {"name": "read", "arguments": {"path": "a.md"}})
+        reasoning, text, tool = self.read(" to=self<|message|>Easy.<|eom|><|start|>assistant to=user<|message|>Done.")
+        self.assertEqual((reasoning, text, tool), ("Easy.", "Done.", ""))
+
+    def test_refuses_an_mlx_lm_that_has_its_own_defaults(self):
+        serve.muse_glimmer.TOKENIZER_DEFAULTS = {}
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            serve.read_glimmer_replies_like_muse_spark()
+        self.assertIn("now has TOKENIZER_DEFAULTS", err.getvalue())
+
+
 class MainTest(Patched):
     """serve.main wires everything together; mlx-lm itself is replaced."""
 
@@ -326,6 +427,7 @@ class MainTest(Patched):
             (serve.server.ModelProvider, "load"): serve.server.ModelProvider.load,
             (serve.server.APIHandler, "do_POST"): serve.server.APIHandler.do_POST,
             (serve.server.APIHandler, "do_GET"): serve.server.APIHandler.do_GET,
+            (serve.generate, "maybe_quantize_kv_cache"): serve.generate.maybe_quantize_kv_cache,
             (serve.mx, "device_info"): lambda: {"max_recommended_working_set_size": GPU},
             (serve.mx, "set_cache_limit"): self.cache_limits.append,
             (memory, "load_config"): lambda d: KAT,
@@ -336,6 +438,10 @@ class MainTest(Patched):
         for (owner, name), value in patches.items():
             self.addCleanup(setattr, owner, name, getattr(owner, name))
             setattr(owner, name, value)
+        # main() gives Glimmer its reply format; each test starts without it.
+        self.assertFalse(hasattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS"))
+        self.addCleanup(lambda: hasattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS")
+                        and delattr(serve.muse_glimmer, "TOKENIZER_DEFAULTS"))
 
     def run_main(self, *extra, kv_bits="8", step="512"):
         original = sys.argv
@@ -355,6 +461,7 @@ class MainTest(Patched):
     def test_wiring(self):
         tokenize, load = serve.server.ResponseGenerator._tokenize, serve.server.ModelProvider.load
         do_post, do_get = serve.server.APIHandler.do_POST, serve.server.APIHandler.do_GET
+        quantize = serve.generate.maybe_quantize_kv_cache
         code, err = self.run_main()
         self.assertEqual(code, 0, err)
         self.assertEqual(self.handed, [
@@ -368,6 +475,8 @@ class MainTest(Patched):
         self.assertIsNot(serve.server.ModelProvider.load, load)
         self.assertIsNot(serve.server.APIHandler.do_POST, do_post)
         self.assertIsNot(serve.server.APIHandler.do_GET, do_get)
+        self.assertIsNot(serve.generate.maybe_quantize_kv_cache, quantize)
+        self.assertEqual(serve.muse_glimmer.TOKENIZER_DEFAULTS, {"chat_template_type": "muse_spark"})
         self.assertEqual(self.disk_paths, ["/repo"])
 
     def test_refuses_options_the_guard_depends_on(self):
@@ -393,7 +502,8 @@ class MainTest(Patched):
         self.assertIn("QWEN_PREFILL_STEP must be at least 16", self.run_main(step="8")[1])
 
     def test_refuses_models_the_estimate_does_not_cover(self):
-        memory.load_config = lambda d: KAT | {"layer_types": ["sliding_attention"] * 40}
+        # Gemma 3 names sliding layers too, but its cache is not the one the estimate models.
+        memory.load_config = lambda d: KAT | {"model_type": "gemma3_text", "layer_types": ["sliding_attention"] * 40}
         code, err = self.run_main()
         self.assertEqual(code, 1)
         self.assertIn("does not know the layer types sliding_attention", err)

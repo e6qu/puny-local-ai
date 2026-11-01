@@ -9,6 +9,12 @@ context cache (mx.get_peak_memory, cache limit 0) on 2026-10-22:
   - KAT-Coder at 8K tokens with a step of 64: 0.26 GiB beyond the cache and
     the scores.
 
+On 2026-11-01 the sliding-window part was measured the same way, but with the
+MLX cache limit lib/serve.py sets, on a cut-down Muse Glimmer: its real layer
+sizes with 8 or 16 of its 52 layers and random 4-bit bfloat16 weights, at
+4,000 to 131,072 tokens with steps of 16 to 512. Every peak above the weights
+was below request_bytes, by a factor of 1.24 to 4.54.
+
 With a quantized cache, mlx-lm computes attention without the fused kernel
 and holds the scores of one step in memory, 2 bytes for each query head,
 step token and context token:
@@ -19,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+from collections import namedtuple
 from pathlib import Path
 
 GIB = 2**30
@@ -82,43 +89,78 @@ class UnsupportedModel(ValueError):
     pass
 
 
+# Text models whose mlx-lm 0.32.2 code gives each sliding-attention layer a
+# RotatingKVCache of sliding_window tokens. Other models name the same layer
+# type but cache it differently, so the estimate refuses them:
+# https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/muse_glimmer.py#L273-L282
+SLIDING_WINDOW_MODEL_TYPES = ("muse_glimmer_text",)
+
+Layers = namedtuple("Layers", "full linear sliding")
+
+
 def layer_counts(config):
-    """(full-attention layers, linear-attention layers), as mlx-lm builds them."""
+    """Full-attention, linear-attention and sliding-window layers, as mlx-lm builds them."""
     layers = config["num_hidden_layers"]
     layer_types = config.get("layer_types")
     if layer_types:
-        unknown = sorted(set(layer_types) - {"full_attention", "linear_attention"})
+        known = {"full_attention", "linear_attention"}
+        if config.get("model_type") in SLIDING_WINDOW_MODEL_TYPES:
+            known.add("sliding_attention")
+        unknown = sorted(set(layer_types) - known)
         if unknown:
             raise UnsupportedModel(
                 f"the memory estimate does not know the layer types {', '.join(unknown)}; "
-                "it covers full and linear attention only"
+                "it covers full and linear attention, and sliding attention for "
+                f"{', '.join(SLIDING_WINDOW_MODEL_TYPES)} only"
             )
-        full_layers = layer_types.count("full_attention")
-        return full_layers, len(layer_types) - full_layers
+        return Layers(
+            layer_types.count("full_attention"),
+            layer_types.count("linear_attention"),
+            layer_types.count("sliding_attention"),
+        )
     interval = config.get("full_attention_interval")
     if interval:
         # mlx-lm's Qwen3.5 models make every interval-th layer full attention.
         full_layers = sum(1 for i in range(layers) if (i + 1) % interval == 0)
-        return full_layers, layers - full_layers
-    return layers, 0
+        return Layers(full_layers, layers - full_layers, 0)
+    return Layers(layers, 0, 0)
+
+
+def kv_values_per_layer_token(config):
+    """Keys and values one token adds to one attention layer."""
+    heads = config["num_attention_heads"]
+    kv_heads = config.get("num_key_value_heads") or heads
+    head_dim = config.get("head_dim") or config["hidden_size"] // heads
+    return 2 * kv_heads * head_dim
 
 
 def kv_values_per_token(config):
     """Keys and values one token adds across the full-attention layers."""
-    full_layers, _ = layer_counts(config)
-    heads = config["num_attention_heads"]
-    kv_heads = config.get("num_key_value_heads") or heads
-    head_dim = config.get("head_dim") or config["hidden_size"] // heads
-    return full_layers * 2 * kv_heads * head_dim
+    return layer_counts(config).full * kv_values_per_layer_token(config)
+
+
+def sliding_cache_bytes(config, tokens):
+    """The sliding-window layers' cache once a request has `tokens` tokens.
+
+    They hold at most sliding_window tokens and stay at 16 bits: mlx-lm cannot
+    quantize a RotatingKVCache, and lib/serve.py leaves those layers alone
+    (https://github.com/ml-explore/mlx-lm/issues/1573).
+    """
+    sliding_layers = layer_counts(config).sliding
+    if not sliding_layers:
+        return 0
+    held_tokens = min(tokens, config["sliding_window"])
+    return sliding_layers * kv_values_per_layer_token(config) * 2 * held_tokens
 
 
 def kv_cache_bytes(config, tokens, kv_bits):
     """Context cache for one conversation of `tokens` tokens.
 
-    mlx-lm keeps the cache at 16 bits until it reaches QUANTIZED_KV_START_TOKENS
-    tokens, then quantizes it (generate.py, maybe_quantize_kv_cache).
+    mlx-lm keeps the full-attention cache at 16 bits until it reaches
+    QUANTIZED_KV_START_TOKENS tokens, then quantizes it (generate.py,
+    maybe_quantize_kv_cache).
     """
-    full_layers, linear_layers = layer_counts(config)
+    layers = layer_counts(config)
     values_per_token = kv_values_per_token(config)
     if tokens >= QUANTIZED_KV_START_TOKENS:
         bytes_per_value = kv_bits / 8 + 2 * 2 / KV_GROUP_SIZE
@@ -128,15 +170,15 @@ def kv_cache_bytes(config, tokens, kv_bits):
 
     # Linear-attention layers keep a fixed-size 32-bit state per conversation.
     linear_part_bytes = 0
-    if linear_layers:
+    if layers.linear:
         linear_part_bytes = (
-            linear_layers
+            layers.linear
             * config["linear_num_value_heads"]
             * config["linear_key_head_dim"]
             * config["linear_value_head_dim"]
             * 4
         )
-    return int(attention_part_bytes + linear_part_bytes)
+    return int(attention_part_bytes + linear_part_bytes + sliding_cache_bytes(config, tokens))
 
 
 def attention_bytes(config, step_tokens, tokens):
@@ -144,21 +186,37 @@ def attention_bytes(config, step_tokens, tokens):
     return int(SCORE_COPIES * config["num_attention_heads"] * min(step_tokens, tokens) * tokens * 2)
 
 
-def growth_bytes(config, tokens, kv_bits):
+def growth_bytes(config, tokens, kv_bits, step_tokens):
     """Copies held for a moment while the cache grows.
 
     The cache grows by concatenation, which copies one layer's cache, and the
     16-bit cache and its quantized copy exist together once, when the cache
     is quantized (mlx-lm cache.py, KVCache.update_and_fetch and to_quantized).
+    During prefill a sliding-window layer holds sliding_window + step - 1
+    tokens and is rebuilt by concatenation too (https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/cache.py#L462-L481),
+    so that is counted for one step on every sliding layer, plus one rebuilt
+    layer.
     """
-    full_layers, _ = layer_counts(config)
-    one_layer_bytes = kv_cache_bytes(config, tokens, kv_bits) // max(full_layers, 1)
+    layers = layer_counts(config)
+    full_part_bytes = kv_cache_bytes(config, tokens, kv_bits) - sliding_cache_bytes(config, tokens)
+    one_layer_bytes = full_part_bytes // max(layers.full, 1)
     if tokens < QUANTIZED_KV_START_TOKENS:
-        return one_layer_bytes
-    # The two copies at the switch outweigh one layer's growth only for short
-    # conversations; taking the larger keeps the estimate from ever falling.
-    at_switch_bytes = kv_values_per_token(config) * 2 * QUANTIZED_KV_START_TOKENS
-    return max(one_layer_bytes, at_switch_bytes)
+        full_growth_bytes = one_layer_bytes
+    else:
+        # The two copies at the switch outweigh one layer's growth only for short
+        # conversations; taking the larger keeps the estimate from ever falling.
+        at_switch_bytes = kv_values_per_token(config) * 2 * QUANTIZED_KV_START_TOKENS
+        full_growth_bytes = max(one_layer_bytes, at_switch_bytes)
+    sliding_growth_bytes = 0
+    if layers.sliding:
+        step_part_tokens = min(step_tokens, tokens)
+        one_sliding_layer_bytes = (
+            kv_values_per_layer_token(config) * 2 * (min(tokens, config["sliding_window"]) + step_part_tokens)
+        )
+        sliding_growth_bytes = (
+            layers.sliding * kv_values_per_layer_token(config) * 2 * step_part_tokens + one_sliding_layer_bytes
+        )
+    return full_growth_bytes + sliding_growth_bytes
 
 
 def request_bytes(config, tokens, step_tokens, kv_bits):
@@ -168,7 +226,7 @@ def request_bytes(config, tokens, step_tokens, kv_bits):
     """
     return (
         kv_cache_bytes(config, tokens, kv_bits)
-        + growth_bytes(config, tokens, kv_bits)
+        + growth_bytes(config, tokens, kv_bits, step_tokens)
         + attention_bytes(config, step_tokens, tokens)
         + FIXED_OVERHEAD_BYTES
         + MLX_CACHE_LIMIT_BYTES

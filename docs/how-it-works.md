@@ -8,6 +8,7 @@ Implementation details for people who want to know what runs, or want to change 
 
 - **Memory and disk guards.** These check each request before mlx-lm processes it, and stop the server before macOS runs out of memory or disk. [models.md](models.md#memory-and-disk-guards) describes them and the measurements behind them.
 - **One model only.** Any request for a model name other than `default_model`, an adapter or a draft model is refused. Otherwise mlx-lm would unload the served model and load, or download, the one named, outside every check.
+- **Muse Glimmer fixes.** Its sliding-window layers stay at 16 bits when the context cache is quantized, which mlx-lm cannot do for them, and its replies are read with mlx-lm's Muse Spark format, so its reasoning and message headers stay out of the reply text. [models.md](models.md#muse-glimmer) has the details.
 - **`GET /v1/models`** answers with `default_model`. It also carries an empty `models` catalog, the format Codex reads from the same path. See [compatibility.md](compatibility.md#known-mlx-lm-issues) for why mlx-lm's own answer is replaced.
 - **`POST /v1/responses`** answers the OpenAI Responses API; see the next section.
 

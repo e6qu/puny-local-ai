@@ -23,6 +23,10 @@ While serving it:
     mlx-lm lacks, by translating it to the server's own Chat Completions
     (lib/responses.py), so those requests pass the same guards;
   - lists only default_model at /v1/models, the one name it accepts;
+  - keeps sliding-window layers at 16 bits when it quantizes the context
+    cache, since mlx-lm cannot quantize them and would fail instead;
+  - reads Muse Glimmer's replies as mlx-lm reads Muse Spark's, so its
+    reasoning and message headers do not reach the agents as reply text;
   - stops the server, with a message, when free memory or disk falls to an
     emergency floor, for example because another application took the
     memory, or when the watchdog itself fails.
@@ -32,6 +36,7 @@ version it was written against.
 """
 
 import argparse
+import importlib
 import logging
 import os
 import sys
@@ -46,6 +51,11 @@ import responses  # noqa: E402
 import mlx.core as mx  # noqa: E402
 import mlx_lm  # noqa: E402
 from mlx_lm import server  # noqa: E402
+from mlx_lm.models import muse_glimmer  # noqa: E402
+from mlx_lm.models.cache import RotatingKVCache  # noqa: E402
+
+# mlx_lm/__init__.py exports a function named generate, which hides the module.
+generate = importlib.import_module("mlx_lm.generate")
 
 MLX_LM_VERSION = "0.32.2"
 # Agents send long system prompts; refuse to start when not even this many
@@ -204,6 +214,56 @@ def guard_models():
     server.ModelProvider.load = load
 
 
+def keep_sliding_layers_unquantized():
+    """Quantizes the context cache as mlx-lm does, except sliding-window layers.
+
+    Once a conversation passes --quantized-kv-start tokens, mlx-lm 0.32.2
+    calls to_quantized on every layer's cache
+    (https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/generate.py#L305-L310).
+    For a RotatingKVCache, the cache of a sliding-window layer such as Muse
+    Glimmer's, that raises NotImplementedError
+    (https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/cache.py#L553-L554),
+    so every longer request would fail:
+    https://github.com/ml-explore/mlx-lm/issues/1573
+    This repeats mlx-lm's function (MIT, Copyright © 2023 Apple Inc.) with
+    one check added.
+    Those layers hold at most sliding_window tokens, so they stay at 16 bits,
+    as lib/memory.py counts them. generate_step looks the function up when it
+    runs, so replacing it here takes effect.
+    """
+    def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_bits):
+        if kv_bits is None:
+            return
+        for e, c in enumerate(prompt_cache):
+            if isinstance(c, RotatingKVCache):
+                continue
+            if hasattr(c, "to_quantized") and c.offset >= quantized_kv_start:
+                prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
+
+    generate.maybe_quantize_kv_cache = maybe_quantize_kv_cache
+
+
+def read_glimmer_replies_like_muse_spark():
+    """Gives Muse Glimmer the reply format mlx-lm has for Muse Spark.
+
+    Both write each reply as messages with headers: reasoning after
+    "to=self<|message|>", the answer after "to=user<|message|>", tool calls
+    in <atem:function_calls>. Glimmer's tokenizer_config.json describes this
+    in its response_template, the same channels as mlx-lm's Muse Spark format
+    (https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/chat_templates/muse_spark.py).
+    mlx-lm 0.32.2 attaches that format only to models whose module names it
+    in TOKENIZER_DEFAULTS, and muse_glimmer.py does not
+    (https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/muse_spark.py#L36-L41,
+    https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/tokenizer_utils.py#L725-L733).
+    Without it the reasoning and the headers reach the agents as reply text.
+    The checkpoint's own chat template is kept: a default chat_template_type
+    replaces only a missing one.
+    """
+    if hasattr(muse_glimmer, "TOKENIZER_DEFAULTS"):
+        die("mlx-lm's muse_glimmer.py now has TOKENIZER_DEFAULTS; check read_glimmer_replies_like_muse_spark against it")
+    muse_glimmer.TOKENIZER_DEFAULTS = {"chat_template_type": "muse_spark"}
+
+
 def add_routes(base_url):
     """Adds the Responses API and replaces the model list.
 
@@ -296,6 +356,8 @@ def main():
     mx.set_cache_limit(memory.MLX_CACHE_LIMIT_BYTES)
     guard_requests(args, config, gpu_limit_bytes)
     guard_models()
+    keep_sliding_layers_unquantized()
+    read_glimmer_replies_like_muse_spark()
     add_routes(args.base_url)
     threading.Thread(target=watch, args=(args,), daemon=True).start()
 

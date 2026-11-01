@@ -28,8 +28,9 @@
 #   QWEN_TEMP                 Sampling temperature. Defaults to the preset's:
 #                             0.8 for kat and kat-full (kat passed 12 of 12
 #                             benchmark runs at 0.8), 1.0 for qwen38-4,
-#                             qwen38, coder-next and coder-next-8 (their
-#                             model cards), and 0.6 for every other model.
+#                             qwen38, coder-next, coder-next-8, glimmer-4
+#                             and glimmer (their model cards), and 0.6 for
+#                             every other model.
 #   QWEN_PREFILL_STEP         The most prompt tokens processed per step
 #                             (default 512). Each request uses the largest
 #                             step up to this that fits in memory; long

@@ -1,6 +1,7 @@
 """./bin/setup, ./bin/install-agents, ./bin/serve-qwen, lib/common.sh, lib/mlx.sh, ./bin/licenses."""
 
 import datetime
+import re
 import subprocess
 import unittest
 
@@ -15,12 +16,18 @@ PRESETS = {
     "qwen38": ("mlx-community/Qwen3.8-27B-8bit", "815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9"),
     "coder-next": ("mlx-community/Qwen3-Coder-Next-4bit", "7b9321eabb85ce79625cac3f61ea691e4ea984b5"),
     "coder-next-8": ("NexVeridian/Qwen3-Coder-Next-8bit", "fbc85334e685d0dd84fa221cc282ebcb6360a478"),
+    "glimmer-4": ("mlx-community/Muse-Glimmer-30B-4bit", "3e7677d7a40d348a3daba263a2b1c0aa41910710"),
+    "glimmer": ("mlx-community/Muse-Glimmer-30B-8bit", "679c45e1b331a6514a6e38076a353cc5fed21bf6"),
 }
 # Each preset's temperature and top_k, as lib/mlx.sh cites them from the model cards.
 SAMPLING = {
     "kat": ("0.8", "20"), "reap": ("0.6", "20"), "small": ("0.6", "20"), "kat-full": ("0.8", "20"),
     "qwen38-4": ("1.0", "20"), "qwen38": ("1.0", "20"), "coder-next": ("1.0", "40"), "coder-next-8": ("1.0", "40"),
+    "glimmer-4": ("1.0", "64"), "glimmer": ("1.0", "64"),
 }
+
+# The context window each card states, where it is not 262,144 tokens.
+CONTEXT = {"glimmer-4": "131072", "glimmer": "131072"}
 
 # df output with 1 MiB free, for the disk checks.
 FULL_DISK_DF = 'echo "Filesystem 1024-blocks Used Available Capacity Mounted on"; echo "fs 1 1 1024 1% /"'
@@ -122,7 +129,7 @@ class MlxLibTest(unittest.TestCase):
             with self.subTest(preset):
                 out = bash(self.box, f'preset_info {preset}; echo "$preset_repo $preset_revision $preset_context $preset_temp $preset_top_k $preset_upstream"')
                 repo_out, rev, context, temp, top_k, upstream = out.stdout.split()
-                self.assertEqual((repo_out, rev, context), (repo, revision, "262144"))
+                self.assertEqual((repo_out, rev, context), (repo, revision, CONTEXT.get(preset, "262144")))
                 self.assertEqual((temp, top_k), SAMPLING[preset])
                 self.assertRegex(upstream, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40}$")
 
@@ -294,27 +301,34 @@ class SetupTest(unittest.TestCase):
         self.assertIn("usage:", self.setup_cmd("--one").stderr)
 
     def test_menu(self):
-        result = self.setup_cmd(tty_input="11\n")
+        result = self.setup_cmd(tty_input="13\n")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("What should be installed?", result.stdout)
-        self.assertIn("11) pi", result.stdout)
+        self.assertIn("13) pi", result.stdout)
         self.assertIn("9) coder-next-8", result.stdout)
+        self.assertRegex(result.stdout, r"11\) glimmer +model: Meta's Muse Glimmer at 8 bits")
+        # The descriptions start in one column, and so do the statuses in the summary.
+        menu = [line for line in result.stdout.splitlines() if re.match(r" +\d+\) ", line)]
+        self.assertEqual(len(menu), 13)
+        self.assertEqual(len({re.match(r" +\d+\) \S+ +", line).end() for line in menu}), 1, menu)
+        summary = result.stdout.split("\n\n")[-1].splitlines()
+        self.assertEqual(len({re.match(r"\S+ +", line).end() for line in summary}), 1, summary)
         self.assertEqual(self.box.called("install-agents"), ["install-agents pi"])
 
     def test_menu_defaults(self):
         result = self.setup_cmd(tty_input="\n")
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("[1 2 10 11]", result.stdout)
+        self.assertIn("[1 2 12 13]", result.stdout)
         self.assertIn("== kat", result.stdout)
         self.assertEqual(self.box.called("install-agents"), ["install-agents opencode", "install-agents pi"])
         self.assertEqual(self.box.called("python"), [], "kat is already verified, so nothing is downloaded")
 
     def test_menu_rejects_bad_numbers(self):
-        for answer in ("12", "0", "08", "x"):
+        for answer in ("14", "0", "08", "x"):
             with self.subTest(answer):
                 result = self.setup_cmd(tty_input=answer + "\n")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(f"'{answer}' is not a number from 1 to 11", result.stdout)
+                self.assertIn(f"'{answer}' is not a number from 1 to 13", result.stdout)
                 self.assertNotIn("value too great", result.stdout)
 
 

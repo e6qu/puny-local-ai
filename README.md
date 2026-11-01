@@ -192,13 +192,13 @@ An environment variable of the same name wins over the file, for one run: `QWEN_
   - `kat`, the default: KAT-Coder-V2.5-Dev, pruned to 11.4 GiB.
   - `reap`: Qwen3.6-35B-A3B pruned the same way, the previous default.
   - `small`: Qwen3.5-4B, 2.8 GiB, for quick tests.
-  - For Macs whose GPU may use more than 16 GiB: `kat-full` (KAT-Coder unpruned, 20.4 GiB), `qwen38-4` and `qwen38` (Qwen3.8-27B at 4 and 8 bits, 15.0 and 27.5 GiB), `coder-next` (Qwen3-Coder-Next at 4 bits, 41.8 GiB) and `coder-next-8` (at 8 bits, 78.8 GiB). [docs/models.md](docs/models.md#presets-for-larger-macs) shows what each needs.
+  - For Macs whose GPU may use more than 16 GiB: `kat-full` (KAT-Coder unpruned, 20.4 GiB), `qwen38-4` and `qwen38` (Qwen3.8-27B at 4 and 8 bits, 15.0 and 27.5 GiB), `coder-next` (Qwen3-Coder-Next at 4 bits, 41.8 GiB), `coder-next-8` (at 8 bits, 78.8 GiB), and `glimmer-4` and `glimmer` (Meta's Muse Glimmer at 4 and 8 bits, 18.1 and 31.1 GiB). [docs/models.md](docs/models.md#presets-for-larger-macs) shows what each needs.
 - `QWEN_REPO` and `QWEN_REVISION`: any other model, as `./bin/models` names it, at a full 40-character commit hash. Set both instead of a preset. Its files are verified like a preset's.
 - `QWEN_CONTEXT`: the context window, in tokens. It defaults to what the model card states, 262144 tokens for all three presets, and is required with `QWEN_REPO`. When it does not fit in the memory the GPU may use, the server tells the agents the part that does and refuses longer requests. Set it when starting `./bin/serve-qwen`; the launchers read the server's value, so you need not repeat it. [docs/models.md](docs/models.md#memory-and-disk-guards) shows what each size needs.
 - `QWEN_MAX_OUTPUT`: the most tokens one reply may use, 8192 tokens by default.
 - `QWEN_PROMPT_CACHE_ENTRIES`: how many conversations' context caches the server keeps, 0 by default. Agents gain nothing from them ([why](docs/models.md#agents-get-no-help-from-the-prompt-cache)), and each costs as much memory as a full context.
 - `QWEN_KV_BITS`: context-cache quantization, 8 (default) or 4. The memory guard relies on the quantized cache, which makes the server take one request at a time.
-- `QWEN_TEMP`: the sampling temperature, by default the preset's: 0.8 for `kat` and `kat-full`, 1.0 for `qwen38-4`, `qwen38`, `coder-next` and `coder-next-8`, and 0.6 for the rest and for any other model.
+- `QWEN_TEMP`: the sampling temperature, by default the preset's: 0.8 for `kat` and `kat-full`, 1.0 for `qwen38-4`, `qwen38`, `coder-next`, `coder-next-8`, `glimmer-4` and `glimmer`, and 0.6 for the rest and for any other model.
 - `QWEN_PREFILL_STEP`: the most prompt tokens processed per step, 512 tokens by default and at least 16. Each request uses the largest step up to this that fits in memory, down to 16 tokens.
 - `QWEN_MEMORY_MARGIN`: memory, in bytes with an optional K, M or G suffix, set aside for the server's own use outside MLX, such as Python and the tokenizer; `512M` (512 MiB) by default.
 - `WEB_UI_URL`: where `./bin/web-ui` listens, `http://127.0.0.1:8090` by default. It must be an address on this Mac.

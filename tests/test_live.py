@@ -239,7 +239,7 @@ class RealSourcesTest(unittest.TestCase):
 
         box = Sandbox()
         self.addCleanup(box.cleanup)
-        for preset in ("kat", "reap", "small", "kat-full", "qwen38-4", "qwen38", "coder-next", "coder-next-8"):
+        for preset in ("kat", "reap", "small", "kat-full", "qwen38-4", "qwen38", "coder-next", "coder-next-8", "glimmer-4", "glimmer"):
             out = subprocess.run(
                 ["bash", "-c", f'source "{box.root}/lib/common.sh"; source "{box.root}/lib/mlx.sh"; preset_info {preset}; echo "$preset_repo $preset_revision"'],
                 env=box.env(), capture_output=True, text=True,

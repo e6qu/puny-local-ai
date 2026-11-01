@@ -23,6 +23,18 @@ KAT = {
     "linear_value_head_dim": 128,
 }
 DENSE = {"num_hidden_layers": 4, "num_attention_heads": 8, "hidden_size": 512}
+# Muse Glimmer's text config:
+# https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit/blob/3e7677d7a40d348a3daba263a2b1c0aa41910710/config.json
+GLIMMER = {
+    "model_type": "muse_glimmer_text",
+    "num_hidden_layers": 52,
+    "layer_types": (["sliding_attention"] * 3 + ["full_attention"]) * 13,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 2,
+    "head_dim": 128,
+    "hidden_size": 6656,
+    "sliding_window": 2048,
+}
 
 
 class SizesTest(unittest.TestCase):
@@ -57,12 +69,37 @@ class SizesTest(unittest.TestCase):
 
     def test_layer_layouts(self):
         interval = {k: v for k, v in KAT.items() if k != "layer_types"} | {"full_attention_interval": 4}
-        self.assertEqual(memory.layer_counts(interval), (10, 30))
-        self.assertEqual(memory.layer_counts(KAT), (10, 30))
-        self.assertEqual(memory.layer_counts(DENSE), (4, 0))
-        sliding = KAT | {"layer_types": ["sliding_attention", "full_attention"] * 20}
-        with self.assertRaisesRegex(memory.UnsupportedModel, "sliding_attention"):
-            memory.kv_cache_bytes(sliding, 100, 8)
+        self.assertEqual(memory.layer_counts(interval), (10, 30, 0))
+        self.assertEqual(memory.layer_counts(KAT), (10, 30, 0))
+        self.assertEqual(memory.layer_counts(DENSE), (4, 0, 0))
+        self.assertEqual(memory.layer_counts(GLIMMER), (13, 0, 39))
+        # Other models name sliding layers too but cache them their own way.
+        for model_type in ("gemma3_text", None):
+            other = GLIMMER | {"model_type": model_type}
+            with self.subTest(model_type), self.assertRaisesRegex(memory.UnsupportedModel, "sliding_attention"):
+                memory.kv_cache_bytes(other, 100, 8)
+        with self.assertRaisesRegex(memory.UnsupportedModel, "chunked_attention"):
+            memory.layer_counts(GLIMMER | {"layer_types": ["chunked_attention"] * 52})
+
+    def test_sliding_layers_hold_one_window_at_16_bits(self):
+        # 13 full layers x keys and values x 2 heads x 128; 39 sliding layers the same, capped at 2048 tokens.
+        full = 13 * 2 * 2 * 128
+        sliding = 39 * 2 * 2 * 128
+        self.assertEqual(memory.kv_cache_bytes(GLIMMER, 1000, 8), (full + sliding) * 2 * 1000)
+        per_value = 8 / 8 + 4 / 64
+        self.assertEqual(memory.kv_cache_bytes(GLIMMER, 131072, 8), int(full * per_value * 131072 + sliding * 2 * 2048))
+        self.assertEqual(memory.kv_cache_bytes(GLIMMER, 131072, 8) - memory.kv_cache_bytes(GLIMMER, 131071, 8),
+                         int(full * per_value))
+
+    def test_sliding_layers_grow_by_one_step_during_prefill(self):
+        # Each sliding layer holds window + step - 1 tokens while prefilling (RotatingKVCache._update_concat).
+        sliding = 39 * 2 * 2 * 128
+        one_layer = 2 * 2 * 128
+        at_switch = 13 * one_layer * 2 * 5000
+        self.assertEqual(memory.growth_bytes(GLIMMER, 131072, 8, 512),
+                         max(int(13 * one_layer * (1 + 4 / 64) * 131072) // 13, at_switch)
+                         + sliding * 2 * 512 + one_layer * 2 * (2048 + 512))
+        self.assertEqual(memory.growth_bytes(KAT, 131072, 8, 512), memory.growth_bytes(KAT, 131072, 8, 16))
 
     def test_attention_scores(self):
         self.assertEqual(memory.attention_bytes(KAT, 512, 262144), int(2.25 * 16 * 512 * 262144 * 2))
@@ -93,6 +130,16 @@ class SizesTest(unittest.TestCase):
             (qwen35_4b, 65536, 128, 2.080),
             (KAT, 8192, 64, 0.372),
         ]
+        # A cut-down Muse Glimmer measured on 2026-11-01 (lib/memory.py).
+        for layers, tokens, step, peak in [
+            (8, 4000, 512, 0.524), (8, 6000, 512, 0.542), (8, 16384, 512, 0.885), (8, 16384, 128, 0.301),
+            (8, 32768, 512, 1.413), (8, 32768, 64, 0.296), (8, 65536, 512, 2.457), (8, 65536, 128, 0.752),
+            (8, 65536, 32, 0.350), (16, 65536, 512, 4.579), (16, 131072, 128, 2.491), (16, 131072, 16, 0.721),
+        ]:
+            cut = GLIMMER | {"num_hidden_layers": layers,
+                             "layer_types": (["sliding_attention"] * 3 + ["full_attention"]) * (layers // 4)}
+            # The probe generated 4 tokens after the prompt.
+            measured.append((cut, tokens + 4, step, peak))
         for config, tokens, step, peak in measured:
             with self.subTest(tokens=tokens, step=step):
                 self.assertGreater(memory.request_bytes(config, tokens, step, 8) / GIB, peak)
@@ -134,12 +181,13 @@ class StepTest(unittest.TestCase):
         self.assertGreater(memory.request_bytes(KAT, 262144, 512, 8), memory.request_bytes(KAT, 262144, 16, 8) + 3 * GIB)
 
     def test_estimate_never_falls_as_context_grows(self):
-        for kv_bits in (4, 8):
-            previous = 0
-            for tokens in list(range(1, 12000, 7)) + list(range(12000, 270000, 997)):
-                now = memory.request_bytes(KAT, tokens, 16, kv_bits)
-                self.assertGreaterEqual(now, previous, (kv_bits, tokens))
-                previous = now
+        for config in (KAT, GLIMMER):
+            for kv_bits in (4, 8):
+                previous = 0
+                for tokens in list(range(1, 12000, 7)) + list(range(12000, 270000, 997)):
+                    now = memory.request_bytes(config, tokens, 16, kv_bits)
+                    self.assertGreaterEqual(now, previous, (config is KAT, kv_bits, tokens))
+                    previous = now
 
 
 class SystemTest(unittest.TestCase):
