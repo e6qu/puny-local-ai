@@ -1,8 +1,15 @@
 # Downloads and run output: Python, the mlx-lm environment, models, caches,
 # Pi settings, benchmark results and logs. Scripts write only here or to
-# $TMPDIR, apart from the global npm installs ./bin/setup runs and the agent
-# configs ./bin/integrate edits.
+# $TMPDIR, apart from puny.conf, the global npm installs ./bin/setup runs and
+# the agent configs ./bin/integrate edits.
 /state/
+
+# Your settings, written by ./bin/config and ./bin/web-ui.
+/puny.conf
+
+# A clone of guregodevo/memdoor (Apache-2.0), read for its team-solve
+# workflow. It is downloaded, never committed.
+/memdoor/
 
 # Python bytecode from running lib/*.py and the bench tests.
 __pycache__/

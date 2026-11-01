@@ -279,7 +279,8 @@ class RoutesTest(unittest.TestCase):
         import json
         import urllib.error
         import urllib.request
-        request = urllib.request.Request(self.base + path, data=json.dumps(body).encode() if body else None,
+        data = None if body is None else json.dumps(body).encode() if body else b""
+        request = urllib.request.Request(self.base + path, data=data,
                                          headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -306,7 +307,9 @@ class RoutesTest(unittest.TestCase):
 
     def test_other_paths_reach_mlx_lm(self):
         self.assertEqual(self.fetch("/nothing")[0], 404)
-        self.assertEqual(self.fetch("/v1/nothing", {"x": 1})[0], 404)
+        # An empty body: mlx-lm answers an unknown path without reading the
+        # body, and unread bytes would make the close a connection reset.
+        self.assertEqual(self.fetch("/v1/nothing", {})[0], 404)
 
 
 class MainTest(Patched):

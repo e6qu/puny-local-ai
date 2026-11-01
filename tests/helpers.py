@@ -42,7 +42,7 @@ class Sandbox:
         # Resolved, because the scripts resolve symlinks such as /var -> /private/var.
         self.dir = Path(tempfile.mkdtemp(prefix="puny-test-")).resolve()
         self.root = self.dir / "repo"
-        for part in ("bin", "lib", "bench"):
+        for part in ("bin", "lib", "bench", "workflows"):
             shutil.copytree(REPO / part, self.root / part, ignore=shutil.ignore_patterns("__pycache__"))
         (self.root / "state").mkdir()
         if link_mlx_env:

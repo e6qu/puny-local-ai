@@ -52,7 +52,36 @@ KAT-Coder starts once 14.43 GiB is free, enough for 32,768 tokens; longer conver
 
 ## Sampling
 
-The server samples with `top_p=0.95, top_k=20, min_p=0.0` and a temperature of 0.6, the setting the [Qwen3.6 model card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/995ad96eacd98c81ed38be0c5b274b04031597b0/README.md) recommends for precise coding in thinking mode. mlx-lm's own default is greedy decoding. KAT-Coder is the exception: it runs at 0.8, between Qwen's 0.6 and the 1.0 in KAT-Coder's own `generation_config.json`, and passed 12 of 12 benchmark runs at that setting.
+The server samples with `top_p=0.95` and `min_p=0.0`, and with each preset's temperature and `top_k`, as its model card recommends; `lib/mlx.sh` quotes each source. mlx-lm's own default is greedy decoding.
+
+- **Qwen3.6** (`reap`) and the small Qwen3.5: temperature 0.6 and `top_k=20`, the setting the [Qwen3.6 model card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/995ad96eacd98c81ed38be0c5b274b04031597b0/README.md) recommends for precise coding in thinking mode.
+- **KAT-Coder** (`kat`, `kat-full`): 0.8 and `top_k=20`, between Qwen's 0.6 and the 1.0 in KAT-Coder's own `generation_config.json`. The pruned `kat` passed 12 of 12 benchmark runs at that setting.
+- **Qwen3.8-27B** (`qwen38-4`, `qwen38`): 1.0 and `top_k=20`, its card's setting for thinking mode ([card](https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md?code=true#L252)), in which it runs by default.
+- **Qwen3-Coder-Next** (`coder-next`, `coder-next-8`): 1.0 and `top_k=40`, as [its card](https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md?code=true#L194) recommends. It has no thinking mode.
+
+## Presets for larger Macs
+
+A Mac with more memory lets the GPU use more, and can run a larger model with the same guards. Five presets are for that; choose one with `QWEN_PRESET` and download it with `./bin/setup` followed by its name. All five are in the same families as the default, with the same hybrid of full and linear attention that the memory estimate was measured on. They were picked on 2026-11-01 from the MLX builds `./bin/models info` reports as runnable by mlx-lm 0.32.2 with a tool-call parser, and they have not been run here: this Mac's GPU may use only 16 GiB.
+
+| Preset | Model and commit | Weights | GPU limit for 32,768 tokens | For 131,072 | For the full 262,144 | Free memory needed to start |
+|---|---|---|---|---|---|---|
+| `kat-full` | [`mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit`](https://huggingface.co/mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit/tree/57c6e8372737f8a04aca1c210c926b8aa29c802e) `57c6e837` | 20.42 GiB | 22.45 GiB | 23.59 GiB | 25.19 GiB | 23.45 GiB |
+| `qwen38-4` | [`mlx-community/Qwen3.8-27B-4bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit/tree/10c35caafbb80f7dc6a7a432cdd11af10a6d4818) `10c35caa` | 14.95 GiB | 18.01 GiB | 21.36 GiB | 26.05 GiB | 19.01 GiB |
+| `qwen38` | [`mlx-community/Qwen3.8-27B-8bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-8bit/tree/815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9) `815b83c0` | 27.48 GiB | 30.54 GiB | 33.88 GiB | 38.58 GiB | 31.54 GiB |
+| `coder-next` | [`mlx-community/Qwen3-Coder-Next-4bit`](https://huggingface.co/mlx-community/Qwen3-Coder-Next-4bit/tree/7b9321eabb85ce79625cac3f61ea691e4ea984b5) `7b9321ea` | 41.76 GiB | 43.88 GiB | 45.21 GiB | 47.08 GiB | 44.88 GiB |
+| `coder-next-8` | [`NexVeridian/Qwen3-Coder-Next-8bit`](https://huggingface.co/NexVeridian/Qwen3-Coder-Next-8bit/tree/fbc85334e685d0dd84fa221cc282ebcb6360a478) `fbc85334` | 78.84 GiB | 80.96 GiB | 82.29 GiB | 84.15 GiB | 81.96 GiB |
+
+The figures come from `lib/memory.py` with the default settings: an 8-bit context cache, no cached prompts and a 512 MiB margin. A preset whose full window does not fit still starts, tells the agents the window that does, and refuses longer requests, as `kat` does here.
+
+What the GPU may use depends on the Mac. macOS reports it as `max_recommended_working_set_size`, which `./bin/models info` and `./bin/serve-qwen` read; this 24 GiB Mac reports 16 GiB. Apple does not document the default for other sizes. Community measurements put it at about three quarters of the memory on larger Macs, for example about 48 GiB on a 64 GiB Mac ([contracollective.com](https://contracollective.com/blog/mac-unified-memory-wired-limit-gpu-large-local-llm-2026), [ivanopcode/devnote-override-macos-metal-vram-cap](https://github.com/ivanopcode/devnote-override-macos-metal-vram-cap)). Run `./bin/models info` with a preset's model on the Mac in question to see what fits there.
+
+What each model is:
+
+- **`kat-full`**: the default's model without the pruning, so all 256 experts per layer instead of 128. Kwaipilot reports 69.4 on SWE-bench Verified for it ([card](https://huggingface.co/Kwaipilot/KAT-Coder-V2.5-Dev/blob/7be56fe773e72b6f5ca93c1ae45d828ddb893922/README.md)). Apache-2.0.
+- **`qwen38-4`** and **`qwen38`**: Qwen3.8-27B at 4 and 8 bits, the newest dense Qwen of this size (August 2026). On Qwen's own table it leads Qwen3.6-27B on every coding row: Terminal-Bench 2.1 73.0 against 63.4, SWE-bench Pro 61.7 against 53.5, QwenSWEBench 79.0 against 49.3 ([card](https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md)). Dense means every token uses all 27 billion parameters, so it answers much more slowly than the 3-billion-active models. The 4-bit build is the smallest of the larger presets, for Macs around 32 GiB; at 4 bits its quality was not measured. Apache-2.0.
+- **`coder-next`** and **`coder-next-8`**: Qwen3-Coder-Next, 80 billion parameters with 3 billion active per token, made for coding agents ([card](https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md)). Its technical report gives 70.6, 71.1 and 71.3 on SWE-bench Verified with the SWE-Agent, MiniSWE-Agent and OpenHands scaffolds ([Table 3](https://arxiv.org/abs/2603.00729)); those scaffolds differ from the one behind Qwen3.6's figures, so the numbers do not compare directly. The 8-bit build is NexVeridian's: mlx-lm picks the `qwen3_coder` tool-call parser for it, but `json_tools` for the lmstudio-community 8-bit build, which does not match the format the model writes. Apache-2.0.
+
+Not picked: Qwen3.6-27B, which Qwen3.8-27B replaces at the same size. Qwen3.6-35B-A3B at 8 bits (35.13 GiB), the unpruned model that `reap` is pruned from, because Qwen3.8-27B scores higher on Qwen's tables and downloads less. Qwen3.8-Flash-Next (103.86 GiB at 4 bits), whose architecture, `qwen4_exp`, is not in mlx-lm 0.32.2 and whose card states an `other` license; Qwen3.8-2.4T-A95B, far beyond any Mac. gpt-oss-120b has no tool-call parser in mlx-lm 0.32.2. MiniMax-M2.5 at 4 bits loads 119.83 GiB, more than a 128 GiB Mac's GPU may use. GLM-4.7-Flash uses an attention layout the memory estimate does not model, and GLM-5.3-Flash's architecture is not in mlx-lm 0.32.2.
 
 ## Other models that fit
 

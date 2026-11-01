@@ -68,7 +68,8 @@ card_license() {
   [[ "$status" == 200 ]] || die "$url answered HTTP $status"
   CARD="$card" python3 -I -c '
 import os, re, sys
-card = os.environ["CARD"]
+# Some cards use Windows line endings; the front matter is read the same either way.
+card = os.environ["CARD"].replace("\r\n", "\n")
 front = re.match(r"---\n(.*?)\n---", card, re.S)
 match = front and re.search(r"^license:\s*(\S+)", front.group(1), re.M)
 print(match.group(1) if match else "not stated in the model card")

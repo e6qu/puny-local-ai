@@ -52,6 +52,12 @@
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0; }
   dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
   .scroll { overflow-x: auto; }
+  .setting { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 4px 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .setting input { width: 100%; }
+  .setting .help { grid-column: 2; }
+  @media (max-width: 600px) { .setting { grid-template-columns: 1fr; } .setting .help { grid-column: 1; } }
+  .notice { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); margin-top: 10px; white-space: pre-wrap; }
+  .notice.good { border-color: var(--accent); } .notice.bad { border-color: var(--bad); }
 </style>
 </head>
 <body>
@@ -60,6 +66,7 @@
   <nav role="tablist">
     <button role="tab" aria-selected="true" data-tab="chat">Chat</button>
     <button role="tab" aria-selected="false" data-tab="models">Models</button>
+    <button role="tab" aria-selected="false" data-tab="settings">Settings</button>
   </nav>
   <div id="status">Checking the server…</div>
 </header>
@@ -96,6 +103,29 @@
     <div class="card"><h3 style="margin-top:0">Downloads</h3><div id="downloads" class="muted">None yet.</div></div>
     <div class="card"><h3 style="margin-top:0">On this Mac</h3><div id="local" class="muted">Loading…</div></div>
   </section>
+
+  <section id="settings" hidden>
+    <div class="card">
+      <h3 style="margin-top:0">Server</h3>
+      <p id="server-state" class="muted">Checking…</p>
+      <div class="row">
+        <button class="primary" data-action="start">Start</button>
+        <button class="secondary" data-action="restart">Restart</button>
+        <button class="secondary" data-action="stop">Stop</button>
+        <span style="flex:1"></span>
+        <button class="secondary" id="integrate">Update agent configs</button>
+      </div>
+      <div id="server-notice"></div>
+      <details style="margin-top:10px"><summary class="muted">Server log</summary><pre><code id="server-log"></code></pre></details>
+    </div>
+    <form id="config" class="card">
+      <h3 style="margin-top:0">Settings</h3>
+      <p class="muted">Saved in <code id="config-file">puny.conf</code>, which every <code>./bin</code> command reads. Leave a field empty for its default. A setting given in the environment of <code>./bin/web-ui</code> wins over the file and cannot be changed here. Server settings apply when the server restarts; the agents learn a new address, model or window from <b>Update agent configs</b>.</p>
+      <div id="config-fields"></div>
+      <div class="row" style="margin-top:12px"><span style="flex:1"></span><button class="primary">Save</button></div>
+      <div id="config-notice"></div>
+    </form>
+  </section>
 </main>
 <script>
 "use strict";
@@ -120,21 +150,38 @@ for (const tab of document.querySelectorAll("nav button")) {
     for (const other of document.querySelectorAll("nav button")) other.setAttribute("aria-selected", other === tab);
     for (const section of document.querySelectorAll("main section")) section.hidden = section.id !== tab.dataset.tab;
     if (tab.dataset.tab === "models") { refreshLocal(); refreshDownloads(); }
+    if (tab.dataset.tab === "settings") { refreshConfig(); }
   });
 }
 
+function describeServer(s) {
+  if (s.state === "running") {
+    return el("span", {}, el("b", {className: "ok", textContent: "● running "}),
+      `${s.model || "a model"}${s.window_tokens ? `, ${s.window_tokens.toLocaleString()}-token window` : ""}`);
+  }
+  if (s.state === "starting") {
+    return el("span", {}, el("b", {className: "warn", textContent: "● starting "}), "loading the model; see the server log");
+  }
+  return el("span", {}, el("b", {className: "off", textContent: `● ${s.state} `}), `nothing answers at ${s.base_url}`);
+}
+
+let statusTimer = null;
 async function refreshStatus() {
-  const box = $("#status");
   try {
     const s = await api("/api/status");
-    box.replaceChildren(s.running
-      ? el("span", {}, el("b", {className: "ok", textContent: "● running "}),
-          `${s.model || "a model"}${s.window_tokens ? `, ${s.window_tokens.toLocaleString()}-token window` : ""}`)
-      : el("span", {}, el("b", {className: "off", textContent: "● stopped "}), `start ./bin/serve-qwen (${s.base_url})`));
-  } catch (e) { box.textContent = e.message; }
+    $("#status").replaceChildren(describeServer(s));
+    $("#server-state").replaceChildren(describeServer(s));
+    if (s.elsewhere) $("#server-state").append(el("div", {className: "warn", textContent: s.elsewhere}));
+    $("#server-log").textContent = s.log.trim().split("\n").slice(-30).join("\n");
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(refreshStatus, s.state === "starting" ? 2000 : 10000);
+  } catch (e) {
+    $("#status").textContent = e.message;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(refreshStatus, 10000);
+  }
 }
 refreshStatus();
-setInterval(refreshStatus, 10000);
 
 // ------------------------------------------------------------ chat
 let history = [];
@@ -241,6 +288,8 @@ async function showInfo(name) {
       : i.fits ? el("span", {className: "good", textContent: `fits: ${i.window_tokens.toLocaleString()} tokens of context within the ${gib(i.gpu_limit_bytes)} GPU limit`})
       : el("span", {className: "bad", textContent: `does not fit: only ${(i.window_tokens || 0).toLocaleString()} tokens of context within the ${gib(i.gpu_limit_bytes)} GPU limit`});
     const download = el("button", {className: "primary", textContent: i.downloaded ? "Downloaded" : `Download ${gib(i.download_bytes)}`, disabled: i.downloaded});
+    const use = el("button", {className: "secondary", textContent: "Use this model"});
+    use.addEventListener("click", () => useModel(i));
     download.addEventListener("click", async () => {
       download.disabled = true;
       try { await api("/api/downloads", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({model: `${i.name}@${i.commit}`})}); refreshDownloads(); }
@@ -258,7 +307,8 @@ async function showInfo(name) {
         el("dt", {textContent: "Context"}), el("dd", {textContent: `${i.config_context_tokens ? i.config_context_tokens.toLocaleString() : "?"} tokens in config.json; check the model card`}),
         el("dt", {textContent: "Memory"}), el("dd", {}, fit),
         el("dt", {textContent: "Serve"}), el("dd", {}, el("code", {textContent: i.serve_command}))),
-      el("div", {className: "row"}, download, el("a", {href: i.url, target: "_blank", rel: "noopener", textContent: "Model card"}))));
+      el("div", {className: "row"}, download, use, el("a", {href: i.url, target: "_blank", rel: "noopener", textContent: "Model card"})),
+      el("div", {id: "use-notice"})));
   } catch (e) { box.replaceChildren(el("div", {className: "card bad", textContent: e.message})); }
 }
 
@@ -287,15 +337,106 @@ async function refreshLocal() {
     if (!found.length) { box.textContent = "No models downloaded yet."; return; }
     const table = el("table", {}, el("tr", {}, ...["Model", "Size", "State"].map((t) => el("th", {textContent: t}))));
     for (const m of found) {
+      const check = el("button", {className: "secondary", textContent: "Check"});
+      check.addEventListener("click", () => showInfo(`${m.name}@${m.commit}`));
       table.append(el("tr", {},
-        el("td", {}, m.name, el("div", {className: "muted"}, el("code", {textContent: m.commit}))),
+        el("td", {}, m.name, el("div", {className: "muted"}, el("code", {textContent: m.commit})), check),
         el("td", {className: "num", textContent: gib(m.size_bytes)}),
         el("td", {className: m.verified ? "good" : "warn", textContent: m.verified ? "verified" : "incomplete"})));
     }
     box.replaceChildren(el("div", {className: "scroll"}, table),
-      el("p", {className: "muted", textContent: "Serve one with QWEN_REPO, QWEN_REVISION and QWEN_CONTEXT, as Check shows. The presets kat, reap and small are served with QWEN_PRESET."}));
+      el("p", {className: "muted", textContent: "Check a model, then Use this model to make it the one the server runs."}));
   } catch (e) { box.textContent = e.message; }
 }
+
+// ------------------------------------------------------------ settings
+function notice(box, text, ok) {
+  $(box).replaceChildren(el("div", {className: `notice ${ok ? "good" : "bad"}`, textContent: text}));
+}
+
+let loaded = {};
+async function refreshConfig() {
+  try {
+    const config = await api("/api/config");
+    $("#config-file").textContent = config.file;
+    loaded = {};
+    const fields = [];
+    let group = null;
+    for (const s of config.settings) {
+      if (s.group !== group) {
+        group = s.group;
+        fields.push(el("h4", {style: "margin:16px 0 0", textContent: {server: "Server", model: "Model", tools: "Other commands"}[group] || group}));
+      }
+      const fromFile = s.source === "puny.conf";
+      loaded[s.key] = fromFile ? s.value : "";
+      const input = el("input", {id: `set-${s.key}`, name: s.key, value: fromFile ? s.value : "",
+        placeholder: s.source === "default" && s.value ? `${s.value} (default)` : "default",
+        disabled: s.source === "environment", autocomplete: "off", spellcheck: false});
+      fields.push(el("div", {className: "setting"},
+        el("label", {htmlFor: input.id}, el("code", {textContent: s.key}), " ",
+          el("span", {className: "tag", textContent: s.source === "environment" ? `environment: ${s.value}` : s.source})),
+        input,
+        el("div", {className: "help muted", textContent: s.help})));
+    }
+    $("#config-fields").replaceChildren(...fields);
+  } catch (e) { notice("#config-notice", e.message, false); }
+}
+
+async function saveConfig(values, unset, box) {
+  const body = await api("/api/config", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({set: values, unset})});
+  notice(box, body.output.trim(), true);
+  refreshConfig();
+}
+
+$("#config").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const values = {}, unset = [];
+  for (const input of $("#config-fields").querySelectorAll("input:not(:disabled)")) {
+    const value = input.value.trim();
+    if (value === loaded[input.name]) continue;
+    if (value) values[input.name] = value; else unset.push(input.name);
+  }
+  if (!Object.keys(values).length && !unset.length) { notice("#config-notice", "Nothing changed.", true); return; }
+  try { await saveConfig(values, unset, "#config-notice"); }
+  catch (e) { notice("#config-notice", `${e.message}\nNothing was saved.`, false); }
+});
+
+async function useModel(i) {
+  if (!i.config_context_tokens) {
+    notice("#use-notice", "config.json states no context window; set QWEN_CONTEXT from the model card on the Settings tab.", false);
+    return;
+  }
+  try {
+    const values = {QWEN_REPO: i.name, QWEN_REVISION: i.commit, QWEN_CONTEXT: String(i.config_context_tokens)};
+    await saveConfig(values, ["QWEN_PRESET"], "#use-notice");
+    notice("#use-notice", `Saved: the server will run ${i.name} with a ${i.config_context_tokens.toLocaleString()}-token window, from config.json; check it against the model card. ${i.downloaded ? "" : "Download it first, then "}restart the server on the Settings tab.`, true);
+  } catch (e) { notice("#use-notice", e.message, false); }
+}
+
+for (const button of document.querySelectorAll("[data-action]")) {
+  button.addEventListener("click", async () => {
+    for (const b of document.querySelectorAll("[data-action]")) b.disabled = true;
+    notice("#server-notice", `${button.textContent}…`, true);
+    try {
+      await api("/api/server", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({action: button.dataset.action})});
+      notice("#server-notice", `${button.textContent}: done. Loading a model takes a minute; the state above updates by itself.`, true);
+    } catch (e) { notice("#server-notice", e.message, false); }
+    finally {
+      for (const b of document.querySelectorAll("[data-action]")) b.disabled = false;
+      refreshStatus();
+    }
+  });
+}
+
+$("#integrate").addEventListener("click", async () => {
+  $("#integrate").disabled = true;
+  try {
+    const body = await api("/api/integrate", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+    notice("#server-notice", body.output.trim(), true);
+  } catch (e) { notice("#server-notice", e.message, false); }
+  finally { $("#integrate").disabled = false; }
+});
 </script>
 </body>
 </html>

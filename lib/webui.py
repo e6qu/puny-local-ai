@@ -1,9 +1,13 @@
-"""A local web page for chatting with the served model and finding new ones.
+"""A local web page for chatting with the model, changing settings and finding new models.
 
-Usage: python -I webui.py --listen http://HOST:PORT --mlx-base-url URL --repo DIR
+Usage: python -I webui.py --listen http://HOST:PORT --repo DIR
 
 Serves lib/webui.html and a small JSON API for it:
-  GET  /api/status            the server at MLX_BASE_URL: running, model, window
+  GET  /api/status            the server: running, starting or stopped, model, window, log
+  POST /api/server            {"action": "start" | "stop" | "restart"} for bin/serve-qwen
+  GET  /api/config            every setting, its value and source (bin/config show)
+  POST /api/config            {"set": {KEY: VALUE}, "unset": [KEY]}, through bin/config
+  POST /api/integrate         runs bin/integrate install, so the agents get the new settings
   POST /api/chat              a chat completion, streamed, passed to the server
   GET  /api/search?q=&source= MLX models on Hugging Face and ModelScope
   GET  /api/info?model=       size, architecture, tool calls and fit (lib/models.py)
@@ -11,16 +15,27 @@ Serves lib/webui.html and a small JSON API for it:
   POST /api/downloads         {"model": "REPO@COMMIT"}: runs bin/models download
   GET  /api/downloads         each download's state and the end of its log
 
+Every change goes through the same commands as the terminal: settings through
+bin/config, which checks them before saving puny.conf; the server through
+bin/serve-qwen, with its memory guards; downloads through bin/models.
+The settings are read again for each request, so a change made in the
+terminal shows up too. bin/web-ui starts this without the values it read from
+puny.conf, so the commands it runs read the file afresh.
+
+A server started here runs in its own session and keeps running when the
+page stops; its output goes to state/logs/serve-qwen.log. Stop stops any
+server this repo started, wherever it was started.
+
 It listens on one address, 127.0.0.1 by default, and answers only requests
 whose Host header names that address, and POSTs only from its own page, so
-other web sites cannot use it through your browser. Downloads run one at a
-time through bin/models, with the same pinning, hash checks and disk checks
-as the command line.
+other web sites cannot use it through your browser.
 """
 
 import argparse
 import http.server
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -36,6 +51,37 @@ import sources  # noqa: E402
 
 PAGE = Path(__file__).resolve().parent / "webui.html"
 LOG_TAIL_BYTES = 4096
+STOP_TIMEOUT_SECONDS = 30
+
+
+class CommandError(Exception):
+    pass
+
+
+def run_command(repo, *args, timeout=600):
+    """Runs one of the repo's commands and returns its output, or raises with what it printed."""
+    result = subprocess.run([str(repo / "bin" / args[0]), *args[1:]], capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, timeout=timeout)
+    if result.returncode != 0:
+        raise CommandError((result.stderr or result.stdout).strip() or f"{args[0]} failed")
+    return result.stdout
+
+
+def tail(path):
+    if not path.is_file():
+        return ""
+    with path.open("rb") as f:
+        f.seek(max(0, path.stat().st_size - LOG_TAIL_BYTES))
+        return f.read().decode(errors="replace")
+
+
+def settings(repo):
+    """{"file": ..., "settings": [{"key", "value", "source", "group", "help"}]} from bin/config."""
+    return json.loads(run_command(repo, "config", "show", "--json"))
+
+
+def setting(repo, key):
+    return next(s["value"] for s in settings(repo)["settings"] if s["key"] == key)
 
 
 class Downloads:
@@ -73,29 +119,110 @@ class Downloads:
             return result
 
 
-def server_status(mlx_base_url, repo):
-    """Whether bin/serve-qwen runs at mlx_base_url, and what it serves."""
-    root = mlx_base_url.rsplit("/v1", 1)[0]
-    port = urllib.parse.urlsplit(mlx_base_url).port
-    status = {"base_url": mlx_base_url, "running": False, "window_tokens": None, "model": None}
-    try:
-        with urllib.request.urlopen(root + "/health", timeout=3) as response:
-            status["running"] = json.load(response).get("status") == "ok"
-    except (OSError, ValueError):
-        return status
-    record = repo / "state" / "served" / f"port-{port}"
-    if record.is_file():
-        fields = record.read_text().split()
-        if len(fields) == 2 and fields[1].isdigit():
-            status["window_tokens"] = int(fields[1])
+class Server:
+    """Starts and stops the bin/serve-qwen servers of this repo."""
+
+    def __init__(self, repo):
+        self.repo = repo
+        self.process = None  # the server this page started last
+        self.stopped = False  # whether Stop ended it, rather than an error
+        self.log = repo / "state" / "logs" / "serve-qwen.log"
+        self.lock = threading.Lock()
+
+    def running(self):
+        """(pid, port) of each server of this repo that bin/serve-qwen recorded and that still runs."""
+        found = []
+        for record in sorted((self.repo / "state" / "served").glob("port-*")):
+            fields = record.read_text().split()
+            if not fields or not fields[0].isdigit():
+                continue
             command = subprocess.run(["ps", "-o", "command=", "-p", fields[0]], capture_output=True, text=True).stdout
-            parts = command.split()
-            if "--model-dir" in parts and parts.index("--model-dir") + 1 < len(parts):
-                status["model"] = Path(parts[parts.index("--model-dir") + 1]).name
-    return status
+            if str(self.repo / "lib" / "serve.py") in command:
+                found.append((int(fields[0]), record.name[len("port-"):]))
+        return found
+
+    def starting(self):
+        return self.process is not None and self.process.poll() is None
+
+    def start(self):
+        with self.lock:
+            running = self.running()
+            if running or self.starting():
+                pid = running[0][0] if running else self.process.pid
+                raise CommandError(f"a server already runs (pid {pid}); stop it first, or use Restart")
+            self.log.parent.mkdir(parents=True, exist_ok=True)
+            with self.log.open("wb") as out:
+                # Its own session, so it keeps running when this page stops.
+                self.stopped = False
+                self.process = subprocess.Popen([str(self.repo / "bin" / "serve-qwen")], stdout=out,
+                                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                                start_new_session=True)
+
+    def stop(self):
+        with self.lock:
+            pids = [pid for pid, _ in self.running()]
+            if self.starting() and self.process.pid not in pids:
+                pids.append(self.process.pid)
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+            while time.monotonic() < deadline and any(alive(pid) for pid in pids):
+                if self.process is not None:
+                    self.process.poll()  # collects it once it exits
+                time.sleep(0.2)
+            self.stopped = True
+            left = [pid for pid in pids if alive(pid)]
+            if left:
+                raise CommandError(f"the server (pid {left[0]}) did not stop within {STOP_TIMEOUT_SECONDS}s")
+            return pids
+
+    def status(self, base_url):
+        root = base_url.rsplit("/v1", 1)[0]
+        port = urllib.parse.urlsplit(base_url).port
+        status = {"base_url": base_url, "state": "stopped", "window_tokens": None, "model": None,
+                  "log": tail(self.log), "elsewhere": False}
+        healthy = False
+        try:
+            with urllib.request.urlopen(root + "/health", timeout=3) as response:
+                healthy = json.load(response).get("status") == "ok"
+        except (OSError, ValueError):
+            pass
+        if healthy:
+            status["state"] = "running"
+        elif self.starting():
+            status["state"] = "starting"
+        elif self.process is not None and not self.stopped:
+            status["state"] = f"stopped (exit {self.process.returncode})"
+        others = [p for _, p in self.running() if p != str(port)]
+        if others:
+            # Settings changed since it started, such as the port.
+            status["elsewhere"] = f"a server of this repo runs on port {others[0]}, not at {base_url}; restart it to apply the settings"
+        record = self.repo / "state" / "served" / f"port-{port}"
+        if healthy and record.is_file():
+            fields = record.read_text().split()
+            if len(fields) == 2 and fields[1].isdigit():
+                status["window_tokens"] = int(fields[1])
+                command = subprocess.run(["ps", "-o", "command=", "-p", fields[0]], capture_output=True, text=True).stdout
+                parts = command.split()
+                if "--model-dir" in parts and parts.index("--model-dir") + 1 < len(parts):
+                    status["model"] = Path(parts[parts.index("--model-dir") + 1]).name
+        return status
 
 
-def make_handler(origin, mlx_base_url, repo, downloads):
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def make_handler(origin, repo, downloads, server):
     host = urllib.parse.urlsplit(origin).netloc
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -133,7 +260,9 @@ def make_handler(origin, mlx_base_url, repo, downloads):
                 if path == "/":
                     self.send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
                 elif path == "/api/status":
-                    self.send(200, server_status(mlx_base_url, repo))
+                    self.send(200, server.status(setting(repo, "MLX_BASE_URL")))
+                elif path == "/api/config":
+                    self.send(200, settings(repo))
                 elif path == "/api/search":
                     q = self.query()
                     results, problems = models.search(q.get("q", ""), q.get("source", "all"), 20)
@@ -148,6 +277,8 @@ def make_handler(origin, mlx_base_url, repo, downloads):
                     self.send(404, {"error": "not found"})
             except sources.SourceError as e:
                 self.send(502, {"error": str(e)})
+            except CommandError as e:
+                self.send(500, {"error": str(e)})
 
         def read_json(self):
             length = int(self.headers.get("Content-Length") or 0)
@@ -176,12 +307,53 @@ def make_handler(origin, mlx_base_url, repo, downloads):
                 self.send(202, {"started": spec})
             elif path == "/api/chat":
                 self.chat(body)
+            elif path == "/api/config":
+                self.change_settings(body)
+            elif path == "/api/server":
+                self.control_server(body.get("action"))
+            elif path == "/api/integrate":
+                try:
+                    self.send(200, {"output": run_command(repo, "integrate", "install")})
+                except CommandError as e:
+                    self.send(400, {"error": str(e)})
             else:
                 self.send(404, {"error": "not found"})
+
+        def change_settings(self, body):
+            values, removed = body.get("set") or {}, body.get("unset") or []
+            if not isinstance(values, dict) or not isinstance(removed, list) or not (values or removed):
+                self.send(400, {"error": 'send {"set": {KEY: VALUE}, "unset": [KEY]}'})
+                return
+            pairs = [f"{k}={v}" for k, v in values.items()] + [f"{k}=" for k in removed]
+            try:
+                # One bin/config call, so the change is checked as a whole before it is saved.
+                output = run_command(repo, "config", "set", *pairs)
+            except CommandError as e:
+                self.send(400, {"error": str(e)})
+                return
+            self.send(200, {"output": output, "config": settings(repo)})
+
+        def control_server(self, action):
+            try:
+                if action in ("stop", "restart"):
+                    server.stop()
+                if action in ("start", "restart"):
+                    server.start()
+                elif action != "stop":
+                    raise CommandError("action must be start, stop or restart")
+            except CommandError as e:
+                self.send(400, {"error": str(e)})
+                return
+            self.send(200, server.status(setting(repo, "MLX_BASE_URL")))
 
         def chat(self, body):
             """Passes a chat request to the server and its streamed reply back."""
             body["model"] = "default_model"
+            try:
+                mlx_base_url = setting(repo, "MLX_BASE_URL")
+            except CommandError as e:
+                self.send(500, {"error": str(e)})
+                return
             request = urllib.request.Request(mlx_base_url + "/chat/completions", data=json.dumps(body).encode(),
                                              headers={"Content-Type": "application/json"})
             try:
@@ -208,15 +380,13 @@ def make_handler(origin, mlx_base_url, repo, downloads):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--listen", required=True, help="http://HOST:PORT to serve the page at")
-    parser.add_argument("--mlx-base-url", required=True)
     parser.add_argument("--repo", required=True, type=Path)
     args = parser.parse_args()
     parts = urllib.parse.urlsplit(args.listen)
     origin = f"http://{parts.netloc}"
-    handler = make_handler(origin, args.mlx_base_url.rstrip("/"), args.repo, Downloads(args.repo))
+    handler = make_handler(origin, args.repo, Downloads(args.repo), Server(args.repo))
     httpd = http.server.ThreadingHTTPServer((parts.hostname, parts.port), handler)
-    print(f"The web UI is at {origin}/ (Ctrl-C stops it). Chat needs ./bin/serve-qwen running at {args.mlx_base_url}.",
-          flush=True)
+    print(f"The web UI is at {origin}/ (Ctrl-C stops it; a server started from it keeps running).", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
