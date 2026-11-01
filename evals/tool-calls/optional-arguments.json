@@ -1,0 +1,81 @@
+{
+  "description": "Optional arguments the request does not ask for must be left out, and an asked-for one set.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search_code",
+        "description": "Search the code base.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "limit the search to this folder"
+            },
+            "case_sensitive": {
+              "type": "boolean"
+            },
+            "max_results": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Find where parse_header is defined, searching only in the src/net folder, matching case exactly. Then name the file."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "search_code",
+          "args": {
+            "query": {
+              "contains": "parse_header"
+            },
+            "path": {
+              "regex": "^(\\./)?src/net/?$"
+            },
+            "case_sensitive": true,
+            "max_results": {
+              "absent": true
+            }
+          },
+          "result": [
+            {
+              "file": "src/net/headers.py",
+              "line": 88,
+              "text": "def parse_header(raw: bytes) -> Header:"
+            }
+          ],
+          "example": {
+            "query": "def parse_header",
+            "path": "src/net",
+            "case_sensitive": true
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "src/net/headers.py"
+        ],
+        "example": "It is defined in src/net/headers.py."
+      }
+    }
+  ]
+}

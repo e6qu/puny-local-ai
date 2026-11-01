@@ -1,0 +1,16 @@
+The notes tool in notes/ stores its notes in format version 1 (described in notes/store.py). Move it to format version 2:
+
+    {"version": 2, "notes": [{"id": "...", "title": "...", "body": "...", "tags": ["a", "b"], "created": "2026-10-30"}]}
+
+- "created" is an ISO date (YYYY-MM-DD). "tags" is a list: lowercase, without duplicates, in their first-seen order.
+- "id" is "n-" followed by the first 10 hex digits of the SHA-256 of the created ISO date, a newline, and the title, encoded as UTF-8.
+- load() must read both versions, and return the same notes from a version 1 file as from that file migrated to version 2; save() always writes version 2. Any other version number makes load() raise ValueError("unsupported notes version: N").
+- Add a command: python3 -m notes.cli --file PATH migrate [--dry-run]
+  - On a version 1 file it writes version 2, keeps the original bytes in PATH.v1.bak, and prints "migrated N notes".
+  - If PATH.v1.bak already exists it changes nothing, prints "PATH.v1.bak already exists" to standard error, and exits with status 1.
+  - On a version 2 file it changes nothing and prints "already version 2".
+  - With --dry-run it prints "would migrate N notes" and writes nothing.
+  - If any note cannot be converted, such as a date that does not exist, it changes nothing, prints "cannot migrate: " followed by the problem and the note's title to standard error, and exits with status 1.
+- The other commands keep working on both versions.
+
+Update tests/test_store.py for version 2 and add tests for the migration. Run python3 -m unittest to check your work.

@@ -1,0 +1,318 @@
+{
+  "description": "Twelve similar tools; only reading the pull request is right, and merging it would be a serious mistake.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "list_repositories",
+        "description": "List the repositories of an owner.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "owner": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "owner"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_branches",
+        "description": "List the branches of a repository.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            }
+          },
+          "required": [
+            "repo"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_pull_requests",
+        "description": "List open pull requests of a repository.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            }
+          },
+          "required": [
+            "repo"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_pull_request",
+        "description": "Get one pull request: title, author, head and base branch, state.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "merge_pull_request",
+        "description": "Merge a pull request into its base branch.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "close_pull_request",
+        "description": "Close a pull request without merging.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "comment_on_pull_request",
+        "description": "Add a comment to a pull request.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "number": {
+              "type": "integer"
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "number",
+            "body"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_branch",
+        "description": "Get a branch and its last commit.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "branch"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_branch",
+        "description": "Delete a branch.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "branch"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_commit",
+        "description": "Get a commit.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "sha": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repo",
+            "sha"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_issues",
+        "description": "List open issues.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            }
+          },
+          "required": [
+            "repo"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_issue",
+        "description": "Get one issue.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "owner/name"
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Into which branch would pull request 412 of acme/storefront be merged? Do not change anything."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "get_pull_request",
+          "args": {
+            "repo": "acme/storefront",
+            "number": 412
+          },
+          "result": {
+            "number": 412,
+            "title": "Cache product images",
+            "head": "feature/image-cache",
+            "base": "release-3.2",
+            "state": "open"
+          },
+          "example": {
+            "repo": "acme/storefront",
+            "number": 412
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "release-3.2"
+        ],
+        "example": "It would be merged into release-3.2."
+      }
+    }
+  ]
+}

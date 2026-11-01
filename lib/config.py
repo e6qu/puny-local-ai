@@ -48,6 +48,12 @@ SETTINGS = [
     ("BENCH_TIMEOUT", "tools", "Seconds per benchmark run (default 900)."),
     ("TEAM_SOLVE_AGENT", "tools", "The agent every ./bin/team-solve step runs: pi (default), opencode or codex."),
     ("TEAM_SOLVE_TIMEOUT", "tools", "Seconds each ./bin/team-solve step may take (default 600)."),
+    ("EVAL_CASES", "tools", "Cases ./bin/evals runs, separated by spaces (default: all; ./bin/evals list shows them)."),
+    ("EVAL_SAMPLES", "tools", "Times ./bin/evals asks each case (default 1)."),
+    ("EVAL_TIMEOUT", "tools", "Seconds one ./bin/evals request may take (default 900)."),
+    ("EVAL_MAX_OUTPUT", "tools", "Tokens one ./bin/evals reply may use (default: QWEN_MAX_OUTPUT)."),
+    ("EVAL_LONG_CONTEXT", "tools", "Largest long-context prompt ./bin/evals sends, in tokens (default: the server's window)."),
+    ("EVAL_THINKING", "tools", "on (default) lets the model think before it answers; off asks a Qwen chat template to skip thinking."),
 ]
 KEYS = [key for key, _, _ in SETTINGS]
 LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Evaluates the served model directly through the server's API, with no agent
+# in between: tool calls, coding, long context and speed. lib/evals.py
+# describes each suite; ./bin/bench-agents measures whole agent runs instead.
+#
+#   ./bin/evals LABEL [SUITE...]   run the suites (default: all) against the
+#                                  running server; LABEL names the model,
+#                                  such as small or kat
+#   ./bin/evals report             summarize every run so far, per label
+#   ./bin/evals list               show the suites and their cases
+#
+# Results go to state/evals/LABEL/results.jsonl, with every request and reply
+# under state/evals/LABEL/transcripts/.
+#
+# The coding suite runs the code the model writes, as your user, in a fresh
+# temporary folder with a 60-second limit, just as a coding agent would.
+#
+# Settings:
+#   EVAL_CASES         case names to run, separated by spaces (default: all);
+#                      ./bin/evals list shows them
+#   EVAL_SAMPLES       times each case is asked (default 1)
+#   EVAL_TIMEOUT       seconds one request may take (default 900)
+#   EVAL_MAX_OUTPUT    tokens one reply may use (default QWEN_MAX_OUTPUT)
+#   EVAL_LONG_CONTEXT  largest long-context prompt in tokens (default: the
+#                      server's window)
+#   EVAL_THINKING      on (default) lets the model think before answering;
+#                      off asks a Qwen chat template to skip it
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+results_root="$PUNY_ROOT/state/evals"
+usage="usage: $PUNY_ROOT/bin/evals LABEL [SUITE...] | $PUNY_ROOT/bin/evals report | $PUNY_ROOT/bin/evals list"
+
+[[ $# -ge 1 ]] || die "$usage"
+case "$1" in
+  report)
+    [[ $# -eq 1 ]] || die "$usage"
+    shopt -s nullglob
+    files=("$results_root"/*/results.jsonl)
+    [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+    exec python3 -I "$PUNY_ROOT/lib/evals.py" report "${files[@]}"
+    ;;
+  list)
+    [[ $# -eq 1 ]] || die "$usage"
+    exec python3 -I "$PUNY_ROOT/lib/evals.py" list
+    ;;
+esac
+
+label="$1"
+shift
+[[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "LABEL may contain only letters, digits, '.', '_' and '-'"
+for suite in "$@"; do
+  [[ " tool-calls coding long-context speed " == *" $suite "* ]] \
+    || die "unknown suite '$suite'; expected any of: tool-calls coding long-context speed"
+done
+[[ -z "${EVAL_THINKING:-}" || "$EVAL_THINKING" == on || "$EVAL_THINKING" == off ]] || die "EVAL_THINKING must be on or off"
+for setting in EVAL_SAMPLES EVAL_TIMEOUT EVAL_MAX_OUTPUT EVAL_LONG_CONTEXT; do
+  value="${!setting:-}"
+  [[ -z "$value" || "$value" =~ ^[1-9][0-9]*$ ]] || die "$setting must be a positive whole number"
+done
+
+require_mlx_server
+load_served_context
+
+export MLX_BASE_URL MLX_MODEL QWEN_CONTEXT QWEN_MAX_OUTPUT
+export EVAL_CASES="${EVAL_CASES:-}" EVAL_SAMPLES="${EVAL_SAMPLES:-}" EVAL_TIMEOUT="${EVAL_TIMEOUT:-}"
+export EVAL_MAX_OUTPUT="${EVAL_MAX_OUTPUT:-}" EVAL_LONG_CONTEXT="${EVAL_LONG_CONTEXT:-}" EVAL_THINKING="${EVAL_THINKING:-}"
+out="$results_root/$label"
+mkdir -p "$out"
+python3 -I "$PUNY_ROOT/lib/evals.py" run "$out" "$label" "$@"
+echo
+python3 -I "$PUNY_ROOT/lib/evals.py" report "$out/results.jsonl"

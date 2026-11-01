@@ -1,0 +1,97 @@
+{
+  "description": "One call with a number and two enum arguments, then an answer from the result.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "convert_units",
+        "description": "Convert a value between units of length.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number"
+            },
+            "from_unit": {
+              "type": "string",
+              "enum": [
+                "mm",
+                "cm",
+                "m",
+                "km",
+                "in",
+                "ft",
+                "yd",
+                "mi"
+              ]
+            },
+            "to_unit": {
+              "type": "string",
+              "enum": [
+                "mm",
+                "cm",
+                "m",
+                "km",
+                "in",
+                "ft",
+                "yd",
+                "mi"
+              ]
+            }
+          },
+          "required": [
+            "value",
+            "from_unit",
+            "to_unit"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many kilometres is a marathon of 26.2 miles? Use the conversion tool, then give the number."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "convert_units",
+          "args": {
+            "value": {
+              "near": [
+                26.2,
+                0.001
+              ]
+            },
+            "from_unit": "mi",
+            "to_unit": "km"
+          },
+          "result": {
+            "value": 42.1648,
+            "unit": "km"
+          },
+          "example": {
+            "value": 26.2,
+            "from_unit": "mi",
+            "to_unit": "km"
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          [
+            "42.16",
+            "42.2"
+          ]
+        ],
+        "example": "A marathon is about 42.16 km."
+      }
+    }
+  ]
+}

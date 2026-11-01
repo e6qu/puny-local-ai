@@ -1,0 +1,64 @@
+{
+  "description": "A 182-line tool result; the answer needs the one line with error E-4471, not the similar E-4470.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search_logs",
+        "description": "Return the log lines of a service for a day.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string",
+              "description": "YYYY-MM-DD"
+            }
+          },
+          "required": [
+            "service",
+            "date"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "In the ledger service's logs for 2026-10-30, at what time did error E-4471 happen, and on which shard?"
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "search_logs",
+          "args": {
+            "service": {
+              "contains": "ledger"
+            },
+            "date": "2026-10-30"
+          },
+          "result": "2026-10-30T08:00:41Z DEBUG worker-2 request handled in 92 ms\n2026-10-30T08:01:32Z INFO worker-3 request handled in 476 ms\n2026-10-30T08:02:43Z INFO worker-5 request handled in 634 ms\n2026-10-30T08:03:59Z INFO worker-4 request handled in 9 ms\n2026-10-30T08:04:02Z DEBUG worker-3 request handled in 578 ms\n2026-10-30T08:05:22Z INFO worker-4 request handled in 899 ms\n2026-10-30T08:06:11Z INFO worker-8 request handled in 399 ms\n2026-10-30T08:07:21Z INFO worker-4 request handled in 812 ms\n2026-10-30T08:08:22Z DEBUG worker-4 request handled in 317 ms\n2026-10-30T08:09:34Z WARN worker-3 request handled in 763 ms\n2026-10-30T08:10:52Z INFO worker-5 request handled in 401 ms\n2026-10-30T08:11:35Z INFO worker-9 request handled in 638 ms\n2026-10-30T08:12:44Z DEBUG worker-8 request handled in 129 ms\n2026-10-30T08:13:44Z DEBUG worker-1 request handled in 404 ms\n2026-10-30T08:14:55Z WARN worker-7 request handled in 590 ms\n2026-10-30T08:15:53Z DEBUG worker-8 request handled in 601 ms\n2026-10-30T08:16:28Z INFO worker-7 request handled in 803 ms\n2026-10-30T08:17:07Z WARN worker-9 request handled in 639 ms\n2026-10-30T08:18:47Z DEBUG worker-8 request handled in 791 ms\n2026-10-30T08:19:00Z DEBUG worker-3 request handled in 233 ms\n2026-10-30T08:20:50Z WARN worker-6 request handled in 883 ms\n2026-10-30T08:21:14Z INFO worker-1 request handled in 212 ms\n2026-10-30T08:22:28Z INFO worker-1 request handled in 11 ms\n2026-10-30T08:23:11Z DEBUG worker-4 request handled in 143 ms\n2026-10-30T08:24:28Z INFO worker-9 request handled in 611 ms\n2026-10-30T08:25:16Z INFO worker-6 request handled in 77 ms\n2026-10-30T08:26:18Z INFO worker-6 request handled in 260 ms\n2026-10-30T08:27:58Z INFO worker-8 request handled in 108 ms\n2026-10-30T08:28:55Z INFO worker-2 request handled in 498 ms\n2026-10-30T08:29:23Z INFO worker-3 request handled in 832 ms\n2026-10-30T08:30:46Z DEBUG worker-1 request handled in 599 ms\n2026-10-30T08:31:31Z INFO worker-6 request handled in 768 ms\n2026-10-30T08:32:35Z DEBUG worker-1 request handled in 398 ms\n2026-10-30T08:33:05Z INFO worker-1 request handled in 347 ms\n2026-10-30T08:34:36Z INFO worker-4 request handled in 845 ms\n2026-10-30T08:35:18Z INFO worker-5 request handled in 641 ms\n2026-10-30T08:36:13Z DEBUG worker-6 request handled in 702 ms\n2026-10-30T08:37:18Z DEBUG worker-8 request handled in 214 ms\n2026-10-30T08:38:23Z INFO worker-2 request handled in 831 ms\n2026-10-30T08:39:16Z INFO worker-9 request handled in 420 ms\n2026-10-30T08:40:58Z INFO worker-5 request handled in 158 ms\n2026-10-30T08:41:05Z ERROR worker-2 E-4470 upstream timeout, retried\n2026-10-30T08:41:46Z WARN worker-6 request handled in 22 ms\n2026-10-30T08:42:28Z INFO worker-1 request handled in 732 ms\n2026-10-30T08:43:59Z INFO worker-6 request handled in 703 ms\n2026-10-30T08:44:09Z INFO worker-7 request handled in 417 ms\n2026-10-30T08:45:35Z INFO worker-6 request handled in 616 ms\n2026-10-30T08:46:47Z INFO worker-1 request handled in 15 ms\n2026-10-30T08:47:47Z WARN worker-7 request handled in 863 ms\n2026-10-30T08:48:13Z INFO worker-4 request handled in 899 ms\n2026-10-30T08:49:27Z INFO worker-8 request handled in 546 ms\n2026-10-30T08:50:12Z WARN worker-5 request handled in 553 ms\n2026-10-30T08:51:43Z INFO worker-3 request handled in 261 ms\n2026-10-30T08:52:58Z WARN worker-7 request handled in 203 ms\n2026-10-30T08:53:55Z INFO worker-2 request handled in 288 ms\n2026-10-30T08:54:53Z INFO worker-9 request handled in 622 ms\n2026-10-30T08:55:39Z INFO worker-2 request handled in 348 ms\n2026-10-30T08:56:32Z WARN worker-9 request handled in 888 ms\n2026-10-30T08:57:40Z INFO worker-7 request handled in 247 ms\n2026-10-30T08:58:22Z INFO worker-9 request handled in 166 ms\n2026-10-30T08:59:52Z INFO worker-5 request handled in 720 ms\n2026-10-30T09:00:52Z INFO worker-1 request handled in 137 ms\n2026-10-30T09:01:43Z INFO worker-4 request handled in 721 ms\n2026-10-30T09:02:51Z INFO worker-7 request handled in 264 ms\n2026-10-30T09:03:30Z DEBUG worker-4 request handled in 685 ms\n2026-10-30T09:04:00Z INFO worker-7 request handled in 600 ms\n2026-10-30T09:05:06Z WARN worker-4 request handled in 600 ms\n2026-10-30T09:06:19Z DEBUG worker-7 request handled in 293 ms\n2026-10-30T09:07:30Z INFO worker-8 request handled in 360 ms\n2026-10-30T09:08:02Z DEBUG worker-3 request handled in 199 ms\n2026-10-30T09:09:13Z INFO worker-4 request handled in 517 ms\n2026-10-30T09:10:14Z INFO worker-3 request handled in 316 ms\n2026-10-30T09:11:10Z INFO worker-8 request handled in 138 ms\n2026-10-30T09:12:07Z INFO worker-8 request handled in 473 ms\n2026-10-30T09:13:04Z INFO worker-3 request handled in 470 ms\n2026-10-30T09:14:56Z WARN worker-6 request handled in 272 ms\n2026-10-30T09:15:50Z INFO worker-3 request handled in 470 ms\n2026-10-30T09:16:13Z INFO worker-3 request handled in 687 ms\n2026-10-30T09:17:41Z WARN worker-4 request handled in 306 ms\n2026-10-30T09:18:02Z INFO worker-4 request handled in 517 ms\n2026-10-30T09:19:16Z INFO worker-4 request handled in 795 ms\n2026-10-30T09:20:23Z INFO worker-4 request handled in 835 ms\n2026-10-30T09:21:04Z INFO worker-4 request handled in 363 ms\n2026-10-30T09:22:20Z INFO worker-4 request handled in 469 ms\n2026-10-30T09:23:47Z DEBUG worker-1 request handled in 280 ms\n2026-10-30T09:24:22Z INFO worker-5 request handled in 547 ms\n2026-10-30T09:25:15Z INFO worker-3 request handled in 7 ms\n2026-10-30T09:26:43Z INFO worker-2 request handled in 789 ms\n2026-10-30T09:27:10Z INFO worker-9 request handled in 567 ms\n2026-10-30T09:28:17Z WARN worker-6 request handled in 261 ms\n2026-10-30T09:29:31Z DEBUG worker-4 request handled in 786 ms\n2026-10-30T09:30:04Z INFO worker-7 request handled in 240 ms\n2026-10-30T09:31:37Z INFO worker-3 request handled in 315 ms\n2026-10-30T09:32:52Z INFO worker-3 request handled in 23 ms\n2026-10-30T09:33:20Z DEBUG worker-9 request handled in 575 ms\n2026-10-30T09:34:48Z DEBUG worker-6 request handled in 775 ms\n2026-10-30T09:35:50Z WARN worker-4 request handled in 818 ms\n2026-10-30T09:36:24Z WARN worker-7 request handled in 266 ms\n2026-10-30T09:37:12Z ERROR worker-6 E-4471 checksum mismatch on shard 12\n2026-10-30T09:37:06Z INFO worker-4 request handled in 550 ms\n2026-10-30T09:38:08Z WARN worker-9 request handled in 168 ms\n2026-10-30T09:39:11Z INFO worker-3 request handled in 165 ms\n2026-10-30T09:40:43Z INFO worker-5 request handled in 112 ms\n2026-10-30T09:41:28Z INFO worker-9 request handled in 637 ms\n2026-10-30T09:42:54Z DEBUG worker-1 request handled in 160 ms\n2026-10-30T09:43:47Z DEBUG worker-6 request handled in 719 ms\n2026-10-30T09:44:09Z WARN worker-3 request handled in 198 ms\n2026-10-30T09:45:51Z INFO worker-6 request handled in 421 ms\n2026-10-30T09:46:44Z DEBUG worker-4 request handled in 366 ms\n2026-10-30T09:47:06Z INFO worker-1 request handled in 867 ms\n2026-10-30T09:48:41Z INFO worker-7 request handled in 155 ms\n2026-10-30T09:49:08Z WARN worker-2 request handled in 407 ms\n2026-10-30T09:50:29Z INFO worker-4 request handled in 132 ms\n2026-10-30T09:51:10Z WARN worker-3 request handled in 438 ms\n2026-10-30T09:52:34Z INFO worker-1 request handled in 850 ms\n2026-10-30T09:53:20Z DEBUG worker-5 request handled in 702 ms\n2026-10-30T09:54:06Z INFO worker-2 request handled in 291 ms\n2026-10-30T09:55:43Z WARN worker-5 request handled in 280 ms\n2026-10-30T09:56:07Z INFO worker-9 request handled in 504 ms\n2026-10-30T09:57:54Z DEBUG worker-8 request handled in 731 ms\n2026-10-30T09:58:47Z INFO worker-1 request handled in 524 ms\n2026-10-30T09:59:38Z WARN worker-7 request handled in 297 ms\n2026-10-30T10:00:59Z WARN worker-7 request handled in 191 ms\n2026-10-30T10:01:33Z INFO worker-7 request handled in 522 ms\n2026-10-30T10:02:52Z WARN worker-6 request handled in 299 ms\n2026-10-30T10:03:08Z INFO worker-3 request handled in 705 ms\n2026-10-30T10:04:53Z INFO worker-9 request handled in 775 ms\n2026-10-30T10:05:13Z INFO worker-7 request handled in 875 ms\n2026-10-30T10:06:35Z DEBUG worker-2 request handled in 429 ms\n2026-10-30T10:07:32Z INFO worker-1 request handled in 444 ms\n2026-10-30T10:08:48Z INFO worker-4 request handled in 538 ms\n2026-10-30T10:09:54Z DEBUG worker-8 request handled in 476 ms\n2026-10-30T10:10:38Z INFO worker-8 request handled in 800 ms\n2026-10-30T10:11:54Z DEBUG worker-8 request handled in 224 ms\n2026-10-30T10:12:51Z WARN worker-7 request handled in 62 ms\n2026-10-30T10:13:20Z INFO worker-2 request handled in 514 ms\n2026-10-30T10:14:42Z WARN worker-2 request handled in 191 ms\n2026-10-30T10:15:35Z INFO worker-2 request handled in 122 ms\n2026-10-30T10:16:38Z INFO worker-3 request handled in 691 ms\n2026-10-30T10:17:13Z WARN worker-1 request handled in 866 ms\n2026-10-30T10:18:10Z INFO worker-5 request handled in 255 ms\n2026-10-30T10:19:39Z WARN worker-6 request handled in 594 ms\n2026-10-30T10:20:23Z INFO worker-9 request handled in 192 ms\n2026-10-30T10:21:10Z WARN worker-6 request handled in 698 ms\n2026-10-30T10:22:43Z DEBUG worker-1 request handled in 433 ms\n2026-10-30T10:23:24Z INFO worker-5 request handled in 726 ms\n2026-10-30T10:24:22Z INFO worker-1 request handled in 828 ms\n2026-10-30T10:25:02Z INFO worker-2 request handled in 849 ms\n2026-10-30T10:26:39Z INFO worker-2 request handled in 77 ms\n2026-10-30T10:27:36Z INFO worker-6 request handled in 455 ms\n2026-10-30T10:28:43Z DEBUG worker-5 request handled in 620 ms\n2026-10-30T10:29:05Z INFO worker-4 request handled in 259 ms\n2026-10-30T10:30:20Z INFO worker-2 request handled in 408 ms\n2026-10-30T10:31:24Z INFO worker-2 request handled in 206 ms\n2026-10-30T10:32:55Z WARN worker-6 request handled in 803 ms\n2026-10-30T10:33:31Z WARN worker-5 request handled in 667 ms\n2026-10-30T10:34:41Z INFO worker-4 request handled in 877 ms\n2026-10-30T10:35:39Z DEBUG worker-4 request handled in 679 ms\n2026-10-30T10:36:03Z WARN worker-4 request handled in 406 ms\n2026-10-30T10:37:09Z DEBUG worker-4 request handled in 454 ms\n2026-10-30T10:38:37Z WARN worker-1 request handled in 409 ms\n2026-10-30T10:39:43Z DEBUG worker-3 request handled in 47 ms\n2026-10-30T10:40:59Z DEBUG worker-9 request handled in 858 ms\n2026-10-30T10:41:06Z INFO worker-6 request handled in 776 ms\n2026-10-30T10:42:31Z WARN worker-9 request handled in 568 ms\n2026-10-30T10:43:45Z WARN worker-2 request handled in 144 ms\n2026-10-30T10:44:53Z INFO worker-7 request handled in 55 ms\n2026-10-30T10:45:14Z INFO worker-3 request handled in 454 ms\n2026-10-30T10:46:06Z INFO worker-6 request handled in 494 ms\n2026-10-30T10:47:36Z INFO worker-1 request handled in 234 ms\n2026-10-30T10:48:40Z DEBUG worker-9 request handled in 273 ms\n2026-10-30T10:49:52Z INFO worker-6 request handled in 275 ms\n2026-10-30T10:50:25Z WARN worker-6 request handled in 390 ms\n2026-10-30T10:51:42Z INFO worker-2 request handled in 338 ms\n2026-10-30T10:52:47Z INFO worker-4 request handled in 665 ms\n2026-10-30T10:53:14Z DEBUG worker-7 request handled in 269 ms\n2026-10-30T10:54:05Z INFO worker-2 request handled in 103 ms\n2026-10-30T10:55:16Z INFO worker-3 request handled in 377 ms\n2026-10-30T10:56:50Z INFO worker-4 request handled in 321 ms\n2026-10-30T10:57:23Z WARN worker-6 request handled in 174 ms\n2026-10-30T10:58:31Z INFO worker-2 request handled in 446 ms\n2026-10-30T10:59:15Z INFO worker-8 request handled in 837 ms",
+          "example": {
+            "service": "ledger",
+            "date": "2026-10-30"
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "09:37:12",
+          "12"
+        ],
+        "example": "E-4471 happened at 09:37:12 on shard 12."
+      }
+    }
+  ]
+}

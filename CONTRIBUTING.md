@@ -31,6 +31,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/integrate.py` and `lib/jsonc.py`: add the provider to the agents' own configs and remove it again, editing JSON and JSONC in place without touching anything else. `lib/integrate.py` also generates the config the launchers pass, so both always agree.
 - `tests/`: the test suite; see [Tests](#tests).
 - `bench/`: the benchmark tasks. Each has `start/` (the project the agent gets), `hidden/` (tests it never sees), `prompt.txt` and an optional `check` script.
+- `evals/`: the cases `./bin/evals` (`lib/evals.py`) asks the model directly: `tool-calls/*.json` conversations, each expected step with an `example` that passes it, and `coding/NAME/` problems with `prompt.md` and hidden tests. Every coding problem and bench task has a reference solution under `tests/fixtures/`, and the tests check that it passes and that the unsolved start fails.
 - `workflows/team-solve/`: the prompts and sample checker `./bin/team-solve` runs, adapted from Memdoor under Apache-2.0. Keep its `LICENSE`, `NOTICE` and `CHANGES.md` with it, and add any further change to `CHANGES.md`.
 - `docs/`: background that does not belong in the README. [docs/how-it-works.md](docs/how-it-works.md) holds the implementation details; keep the README to what users do.
 - `state/`: everything downloaded or produced at run time. It is ignored by git; delete it to start over.

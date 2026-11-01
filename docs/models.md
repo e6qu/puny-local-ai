@@ -113,11 +113,18 @@ Qwen's 73.4 and Kwaipilot's 64.4 for the same Qwen3.6-35B-A3B come from differen
 
 ## Comparing models
 
-`./bin/bench-agents LABEL` gives each agent three small Python projects from `bench/`, each with a request in `prompt.txt`:
+`./bin/bench-agents LABEL` gives each agent seven Python projects from `bench/`, each with a request in `prompt.txt`. Three are small:
 
 - `inventory`: fix four bugs that the failing tests point at, without touching the tests.
 - `todo`: add a command and a flag to a command-line tool, and update a test whose expected output changes.
 - `billing`: rename a function across several files and change its rate argument from a fraction to a percentage, keeping every result the same.
+
+Four are harder, each with several things to get right at once:
+
+- `jobqueue`: a pool of worker threads with four separate bugs behind three user reports: a shutdown that hangs, a failing job that stops later ones, retries off by one, and results in the wrong order. The hidden tests time out instead of hanging.
+- `logstats`: a log report that is correct but quadratic. It must give the same output, character for character, on 200,000 lines in under two seconds. The hidden tests compare it with a frozen copy of the original on hundreds of random logs, and the `check` script refuses an answer read from a file.
+- `notes`: move a notes file from format version 1 to version 2, with stable ids, while still reading version 1, and add a `migrate` command that keeps a backup, has a dry run, does nothing twice, and changes nothing when one note is bad.
+- `templ`: build a template language from its `SPEC.md`: values, filters, conditions, loops, comments, whitespace control, HTML escaping, and errors that name their line.
 
 Each run works on a fresh copy. When the agent finishes, tests it never saw (`bench/TASK/hidden`) are copied in, and the whole suite plus the task's `check` script decide pass or fail. Results go to `state/bench/LABEL/`, with each run's log and final files. `./bin/bench-agents report` summarizes every label side by side.
 
@@ -127,6 +134,34 @@ Serve one model, run `BENCH_RUNS=2 ./bin/bench-agents first-model`, stop the ser
 - `BENCH_AGENTS`: the agents to run, `opencode pi` by default; `codex` works too.
 - `BENCH_TASKS`: the tasks to run, every folder in `bench/` by default.
 - `BENCH_TIMEOUT`: seconds per run, 900 by default.
+
+## Evaluating the model directly
+
+`./bin/evals LABEL` tests the served model through the server's own API, with no agent in between, so a result says how the model does rather than how a model and an agent do together. It has four suites; run some with `./bin/evals LABEL coding speed`, and list the cases with `./bin/evals list`:
+
+- `tool-calls`: ten scripted conversations in `evals/tool-calls/`. The model must pick the right tool among up to twelve similar ones, give arguments that match the schema and the expected values (types, enums, nested objects, ISO dates, optional arguments left out), wait for one result before a call that needs it, recover from a tool error, find one line in a 182-line result, and answer from what the tools returned. A call where none was expected fails the case.
+- `coding`: ten problems in `evals/coding/`, written for this project so they cannot be in any model's training data: an exact calculator with error positions, glob matching without exponential time, a cron schedule's next time, JSON Patch, weighted interval coverage, deterministic topological order with cycle reporting, an LRU cache with expiry, nested run-length expansion, shortest paths through a maze with portals, and splitting money by weights to the cent. The model writes a module from `prompt.md`; hidden tests check edge cases, compare it with a brute-force version on random inputs, and give it a time budget.
+- `long-context`: an inventory of hosts filling 4,096 tokens and up, as far as the window allows, with the one record asked about at 10%, 50% and 90% of the way through, among decoys that differ in one detail. Prompt sizes are measured with the server's own token counts.
+- `speed`: prefill and decode speed, and the time to the first token, at 1,024, 8,192 and 32,768 tokens of prompt, from streamed replies. Each prompt starts with something new, so no cached prompt shortens it.
+
+The coding suite runs the code the model writes, as you, in a fresh temporary folder with a 60-second limit, as a coding agent would. Results go to `state/evals/LABEL/results.jsonl`, with every request and reply in `transcripts/`; `./bin/evals report` compares the labels. A request the server refuses, for example because memory is short, counts as an error, not a failure. These settings shape a run:
+
+- `EVAL_CASES`: the cases to run, separated by spaces, all by default.
+- `EVAL_SAMPLES`: how many times each case is asked, 1 by default. Sampling is random, so use three or more to compare models.
+- `EVAL_TIMEOUT`: seconds one request may take, 900 by default.
+- `EVAL_MAX_OUTPUT`: tokens one reply may use, `QWEN_MAX_OUTPUT` by default. Thinking models need room to think before they answer.
+- `EVAL_LONG_CONTEXT`: the largest long-context prompt, in tokens, the window by default. Long prompts take minutes on a small Mac.
+- `EVAL_THINKING`: `on` by default, the model's own behaviour. `off` sends `enable_thinking: false` to the chat template, which Qwen's templates follow; a small model that thinks in circles then answers at once, which shows what it can do without the thinking.
+
+### A first baseline
+
+Measured on 2026-11-01 on this Mac with the `small` preset (Qwen3.5-4B at 4 bits), one sample each:
+
+- `./bin/evals`: tool calls 8 of 10 at first (one failure was a flaw in the eval since fixed, the other an argument nobody asked for, which a second try got right); long context 12 of 12 up to 65,536 tokens, the limit set for the run; coding 0 of 10. In 6 of the coding problems it spent its 8,192 output tokens thinking and never answered, and 32,768 tokens did not help `calc`. With `EVAL_THINKING=off` it answered at once and passed 1 of 10.
+- Speed: prefill 672, 658 and 545 tokens a second and decode 70, 60 and 43 at 1,024, 8,192 and 32,768 tokens of prompt; the first token came after 1.4, 12.1 and 58.9 seconds.
+- `./bin/bench-agents` with Pi on the four harder tasks: 0 of 4. It ran out of output tokens on `jobqueue` and `notes`, broke the report's output on `logstats`, and timed out on `templ`.
+
+A 4-billion-parameter model is for checking that the setup works, not for coding; the harder tasks and the coding problems are there to tell larger models apart.
 
 ## REAP against KAT-Coder
 

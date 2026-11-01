@@ -1,0 +1,59 @@
+{
+  "description": "Tools are offered but the question needs none; calling one fails.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Current weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_web",
+        "description": "Search the web.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Without using any tools: what is 17 multiplied by 23? Reply with the number."
+    }
+  ],
+  "steps": [
+    {
+      "answer": {
+        "contains": [
+          "391"
+        ],
+        "example": "17 x 23 = 391"
+      }
+    }
+  ]
+}

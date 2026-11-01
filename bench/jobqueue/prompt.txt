@@ -1,0 +1,7 @@
+Users of the jobqueue package report three problems. Find and fix their causes in jobqueue/; keep the public API of JobQueue exactly as documented in its docstrings.
+
+1. Sometimes shutdown(wait=True) never returns.
+2. After a job raises an exception, later jobs sometimes never run, and results() hangs.
+3. A job submitted with retries=2 is run up to four times; it should run at most three times (the first try plus two retries). Also, results() should list the results in the order the jobs were submitted, but they come back in the order they finished.
+
+Add tests to tests/test_queue.py that would have caught each problem. Run python3 -m unittest to check your work.

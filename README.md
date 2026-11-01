@@ -167,6 +167,7 @@ It exits 0 when every sample passes. A step that fails, or takes longer than `TE
 - `./bin/smoke-test [opencode|pi|codex]` runs `./bin/check-tool-calls`, and `./bin/check-responses-api` when Codex is among the agents, then has each agent create a file and checks its contents. Without arguments it runs OpenCode, Pi and, if installed, Codex. Runs happen in the system temp folder and stay out of your session history. `SMOKE_TIMEOUT` caps each agent at 300 seconds by default.
 - `./bin/team-solve [FOLDER]` has a team of fresh agent runs solve the programming problem in FOLDER; see above.
 - `./bin/bench-agents LABEL` runs the coding benchmark in `bench/`, and `./bin/bench-agents report` compares the results; see [docs/models.md](docs/models.md#comparing-models).
+- `./bin/evals LABEL` tests the served model directly, with no agent: tool calls, coding, long context and speed; `./bin/evals report` compares the results. See [docs/models.md](docs/models.md#evaluating-the-model-directly).
 - `./bin/install-agents [opencode|pi]` installs the pinned agent versions; `./bin/setup` uses it. It refuses releases younger than 24 hours. Set `ALLOW_FRESH_RELEASE=1` only for a release that fixes a reported security advisory.
 - `./bin/licenses` prints the license of every downloaded package and model, for [THIRD_PARTY.md](THIRD_PARTY.md).
 - `./tests/run` runs the test suite; `./tests/run --live` adds the tests against the real model and agents. [CONTRIBUTING.md](CONTRIBUTING.md#tests) explains both.
@@ -203,7 +204,7 @@ An environment variable of the same name wins over the file, for one run: `QWEN_
 - `QWEN_MEMORY_MARGIN`: memory, in bytes with an optional K, M or G suffix, set aside for the server's own use outside MLX, such as Python and the tokenizer; `512M` (512 MiB) by default.
 - `WEB_UI_URL`: where `./bin/web-ui` listens, `http://127.0.0.1:8090` by default. It must be an address on this Mac.
 - `TEAM_SOLVE_AGENT`: the agent every `./bin/team-solve` step runs, `pi` (default), `opencode` or `codex`. `TEAM_SOLVE_TIMEOUT`: the seconds each step may take, 600 by default.
-- `SMOKE_TIMEOUT` and the `BENCH_*` settings of `./bin/smoke-test` and `./bin/bench-agents` can be saved too; [docs/models.md](docs/models.md#comparing-models) describes the benchmark ones.
+- `SMOKE_TIMEOUT`, the `BENCH_*` settings of `./bin/smoke-test` and `./bin/bench-agents`, and the `EVAL_*` settings of `./bin/evals` can be saved too; [docs/models.md](docs/models.md#comparing-models) describes the benchmark and eval ones.
 
 `./bin/integrate install` records the server address, context window and reply limit in the agents' configs. After changing `QWEN_PRESET`, `QWEN_REPO`, `QWEN_CONTEXT`, `MLX_BASE_URL` or `QWEN_MAX_OUTPUT`, restart the server and run it again; it reads the same `puny.conf`.
 

@@ -1,0 +1,1 @@
+Implement the template language described in SPEC.md: make templ.render(source, context) in templ/__init__.py follow the spec exactly, including its errors. Use only the standard library, and do not use eval, exec or compile. Add tests to tests/test_render.py for each part of the spec. Run python3 -m unittest to check your work.

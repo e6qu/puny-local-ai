@@ -1,0 +1,72 @@
+{
+  "description": "The first call fails with a hint; the model must retry with the corrected path and answer from the file.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a text file in the project.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "What port does the service listen on, according to config.yml in the project root?"
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": {
+              "regex": "(^|/)config\\.yml$"
+            }
+          },
+          "result": "error: no such file: config.yml. The project has config.yaml.",
+          "example": {
+            "path": "config.yml"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": {
+              "regex": "(^|/)config\\.yaml$"
+            }
+          },
+          "result": "service:\n  name: ledger\n  listen:\n    host: 0.0.0.0\n    port: 8443\n  workers: 4\n",
+          "example": {
+            "path": "config.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "8443"
+        ],
+        "example": "It listens on port 8443."
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "description": "Two independent calls, in one reply or in two; the answer compares both results.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Current weather for one city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "units": {
+              "type": "string",
+              "enum": [
+                "metric",
+                "imperial"
+              ]
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Is it warmer right now in Oslo or in Lima? Check both, then tell me which and by how many degrees Celsius."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "get_weather",
+          "args": {
+            "city": {
+              "contains": "oslo"
+            },
+            "units": {
+              "optional": true,
+              "equals": "metric"
+            }
+          },
+          "result": {
+            "city": "Oslo",
+            "temperature_c": 4,
+            "sky": "overcast"
+          },
+          "example": {
+            "city": "Oslo"
+          }
+        },
+        {
+          "tool": "get_weather",
+          "args": {
+            "city": {
+              "contains": "lima"
+            },
+            "units": {
+              "optional": true,
+              "equals": "metric"
+            }
+          },
+          "result": {
+            "city": "Lima",
+            "temperature_c": 19,
+            "sky": "clear"
+          },
+          "example": {
+            "city": "Lima",
+            "units": "metric"
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "Lima",
+          "15"
+        ],
+        "example": "Lima is warmer, by 15 degrees Celsius."
+      }
+    }
+  ]
+}

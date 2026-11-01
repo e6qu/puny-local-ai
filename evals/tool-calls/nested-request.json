@@ -1,0 +1,98 @@
+{
+  "description": "An HTTP request with a header object and a JSON body object nested in the arguments.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "http_request",
+        "description": "Send an HTTP request.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE"
+              ]
+            },
+            "url": {
+              "type": "string"
+            },
+            "headers": {
+              "type": "object"
+            },
+            "json_body": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "method",
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Create the item: POST to https://api.example.com/v2/items with the header X-Trace-Id set to 9f2c and a JSON body where name is widget and qty is the number 3. Then tell me the new item's id."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "http_request",
+          "args": {
+            "method": "POST",
+            "url": "https://api.example.com/v2/items",
+            "headers": {
+              "fields": {
+                "X-Trace-Id": "9f2c"
+              }
+            },
+            "json_body": {
+              "equals": {
+                "name": "widget",
+                "qty": 3
+              }
+            }
+          },
+          "result": {
+            "status": 201,
+            "body": {
+              "id": "itm_88213",
+              "name": "widget",
+              "qty": 3
+            }
+          },
+          "example": {
+            "method": "POST",
+            "url": "https://api.example.com/v2/items",
+            "headers": {
+              "X-Trace-Id": "9f2c"
+            },
+            "json_body": {
+              "name": "widget",
+              "qty": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "itm_88213"
+        ],
+        "example": "Created item itm_88213."
+      }
+    }
+  ]
+}

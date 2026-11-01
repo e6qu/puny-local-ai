@@ -1,0 +1,125 @@
+{
+  "description": "The second call needs an id that only the first call's result holds.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "find_customer",
+        "description": "Find a customer by email address. Returns the customer id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "email"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_orders",
+        "description": "List a customer's orders.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "customer_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "open",
+                "shipped",
+                "cancelled",
+                "any"
+              ]
+            }
+          },
+          "required": [
+            "customer_id",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Which orders of dana.ortiz@example.com are still open? Give their order numbers."
+    }
+  ],
+  "steps": [
+    {
+      "calls": [
+        {
+          "tool": "find_customer",
+          "args": {
+            "email": {
+              "iequals": "dana.ortiz@example.com"
+            }
+          },
+          "result": {
+            "customer_id": "cus_7781QZ",
+            "name": "Dana Ortiz"
+          },
+          "example": {
+            "email": "dana.ortiz@example.com"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "tool": "list_orders",
+          "args": {
+            "customer_id": "cus_7781QZ",
+            "status": {
+              "one_of": [
+                "open",
+                "any"
+              ]
+            }
+          },
+          "result": {
+            "orders": [
+              {
+                "number": "A-1019",
+                "status": "open"
+              },
+              {
+                "number": "A-1023",
+                "status": "open"
+              },
+              {
+                "number": "A-0981",
+                "status": "shipped"
+              }
+            ]
+          },
+          "example": {
+            "customer_id": "cus_7781QZ",
+            "status": "open"
+          }
+        }
+      ]
+    },
+    {
+      "answer": {
+        "contains": [
+          "A-1019",
+          "A-1023"
+        ],
+        "example": "Open orders: A-1019 and A-1023."
+      }
+    }
+  ]
+}

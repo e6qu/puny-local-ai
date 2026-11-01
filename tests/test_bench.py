@@ -34,7 +34,7 @@ def grade(task, solved):
 
 class TasksTest(unittest.TestCase):
     def test_every_task_is_complete(self):
-        self.assertEqual(TASKS, ["billing", "inventory", "todo"])
+        self.assertEqual(TASKS, ["billing", "inventory", "jobqueue", "logstats", "notes", "templ", "todo"])
         for task in TASKS:
             with self.subTest(task):
                 for part in ("prompt.txt", "start", "hidden"):
@@ -70,6 +70,14 @@ class TasksTest(unittest.TestCase):
         result = subprocess.run([str(REPO / "bench" / "billing" / "check")], cwd=work / "b", capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("calc_tax is still mentioned", result.stdout)
+        # A logstats report that reads a saved answer instead of computing it.
+        shutil.copytree(REPO / "bench" / "logstats" / "start", work / "l", dirs_exist_ok=True)
+        shutil.copytree(SOLUTIONS / "logstats", work / "l", dirs_exist_ok=True)
+        report = work / "l" / "logstats" / "report.py"
+        report.write_text(report.read_text() + "\nCACHED = open('answer.txt').read()\n")
+        result = subprocess.run([str(REPO / "bench" / "logstats" / "check"), str(REPO / "bench" / "logstats")], cwd=work / "l", capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reads or writes files", result.stdout)
 
 
 class BenchAgentsTest(ServerCase):
@@ -94,11 +102,11 @@ class BenchAgentsTest(ServerCase):
                 result = self.bench("good", "solve", task=task)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         rows = self.results("good")
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 2 * len(TASKS))
         self.assertEqual({r[4] for r in rows}, {"pass"}, rows)
         # Agents ran in temporary folders outside the repo, with the prompt as given.
         cwds = [line for line in self.env_log("opencode").splitlines() if line.startswith("cwd=")]
-        self.assertEqual(len(cwds), 3)
+        self.assertEqual(len(cwds), len(TASKS))
         self.assertTrue(all(str(self.box.root) not in line for line in cwds))
         prompt = (REPO / "bench" / "todo" / "prompt.txt").read_text().strip()
         self.assertIn(prompt, (self.box.calls / "pi").read_text())
