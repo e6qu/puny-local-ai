@@ -309,7 +309,8 @@ class SetupTest(unittest.TestCase):
         self.assertRegex(result.stdout, r"11\) glimmer +model: Meta's Muse Glimmer at 8 bits")
         # The descriptions start in one column, and so do the statuses in the summary.
         menu = [line for line in result.stdout.splitlines() if re.match(r" +\d+\) ", line)]
-        self.assertEqual(len(menu), 13)
+        self.assertEqual(len(menu), 14)
+        self.assertRegex(result.stdout, r"14\) web-ui +the web UI, built with Go [0-9.]+ and HTMX [0-9.]+ \[not built\]")
         self.assertEqual(len({re.match(r" +\d+\) \S+ +", line).end() for line in menu}), 1, menu)
         summary = result.stdout.split("\n\n")[-1].splitlines()
         self.assertEqual(len({re.match(r"\S+ +", line).end() for line in summary}), 1, summary)
@@ -324,11 +325,11 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(self.box.called("python"), [], "kat is already verified, so nothing is downloaded")
 
     def test_menu_rejects_bad_numbers(self):
-        for answer in ("14", "0", "08", "x"):
+        for answer in ("15", "0", "08", "x"):
             with self.subTest(answer):
                 result = self.setup_cmd(tty_input=answer + "\n")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(f"'{answer}' is not a number from 1 to 13", result.stdout)
+                self.assertIn(f"'{answer}' is not a number from 1 to 14", result.stdout)
                 self.assertNotIn("value too great", result.stdout)
 
 

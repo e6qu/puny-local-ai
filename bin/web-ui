@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# Starts a local web page for chatting with the served model, changing the
-# settings in puny.conf, starting and stopping the server, and searching,
-# checking and downloading MLX models from Hugging Face and ModelScope. Runs in
-# the foreground; Ctrl-C stops it. lib/webui.py has the details.
+# Starts the web UI on this Mac, laid out like a desktop container manager:
+# the model server with its log, the models (presets, downloaded, and a
+# search of Hugging Face and ModelScope), chat, the team-solve workflow, the
+# agent benchmark and the evals, the coding agents' configs, the jobs it ran,
+# and the settings in puny.conf, as a form or as the file itself. Runs in the
+# foreground; Ctrl-C stops it. ui/main.go has the details.
+#
+#   ./bin/web-ui           build if needed, then serve
+#   ./bin/web-ui --build   only build
+#
+# The first run downloads Go and HTMX at the versions pinned in
+# lib/webui.sh, checked against their published hashes, and builds ui/ into
+# state/web-ui/. Later runs rebuild only when ui/ or a pin changes.
 #
 # Settings:
 #   WEB_UI_URL    where the page listens, http://127.0.0.1:8090 by default.
@@ -14,6 +23,11 @@ set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/webui.sh"
+
+[[ $# -eq 0 || ( $# -eq 1 && "$1" == --build ) ]] || die "usage: $PUNY_ROOT/bin/web-ui [--build]"
+ensure_web_ui
+[[ "${1:-}" == --build ]] && exit 0
 
 WEB_UI_URL="$(web_ui_url)"
 port="${WEB_UI_URL##*:}"
@@ -21,6 +35,8 @@ busy="$(listener_pid "$port")"
 [[ -z "$busy" ]] \
   || die "port $port is already in use by $(ps -p "$busy" -o comm= || echo "an unknown program") (pid $busy). Stop it, or set WEB_UI_URL to a free port."
 
+# The model pages run lib/models.py in the mlx-lm environment; installing it
+# here keeps that from happening in the middle of a request.
 ensure_mlx_env
 # The commands the page runs read puny.conf themselves, so that changes made
 # from the page apply; values loaded from it here would otherwise win as
@@ -28,4 +44,4 @@ ensure_mlx_env
 for key in $CONFIG_FROM_FILE; do
   unset "$key"
 done
-exec "$mlx_python" -I "$PUNY_ROOT/lib/webui.py" --listen "$WEB_UI_URL" --repo "$PUNY_ROOT"
+exec "$WEB_UI_BIN" --listen "$WEB_UI_URL" --repo "$PUNY_ROOT" --htmx "$WEB_UI_HTMX" --htmx-version "$HTMX_VERSION"

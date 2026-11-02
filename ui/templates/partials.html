@@ -1,0 +1,168 @@
+{{define "notice"}}{{if .}}<div class="notice {{.Kind}}" role="status">{{.Text}}</div>{{end}}{{end}}
+
+{{define "server-card"}}<div id="server-card" class="card server"
+  {{if eq .Status.State "starting"}}hx-get="/fragments/server" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
+  <div class="cardhead">
+    <div>
+      <div class="state {{stateClass .Status.State}}"><span class="dot"></span>{{.Status.State}}</div>
+      <h2>{{if .Status.Model}}{{.Status.Model}}{{else}}{{.Settings.Get "QWEN_REPO"}}{{end}}</h2>
+      <div class="muted">{{.Status.BaseURL}}{{if .Status.PID}} · pid {{.Status.PID}}{{end}}</div>
+    </div>
+    <div class="actions" hx-target="#server-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+      {{if or (eq .Status.State "running") (eq .Status.State "starting")}}
+      <button class="secondary" hx-post="/server/restart">Restart</button>
+      <button class="danger" hx-post="/server/stop">Stop</button>
+      {{else}}
+      <button class="primary" hx-post="/server/start">Start</button>
+      {{end}}
+    </div>
+  </div>
+  {{if .Status.Elsewhere}}<div class="notice warn">{{.Status.Elsewhere}}</div>{{end}}
+  {{if and .Status.Model (ne .Status.Model (.Settings.Get "QWEN_REPO"))}}<div class="notice warn">The server runs {{.Status.Model}}, but the settings name {{.Settings.Get "QWEN_REPO"}}: it was started with other settings, perhaps from the terminal. Restart it to switch.</div>{{end}}
+  <dl class="facts">
+    <dt>Settings</dt><dd class="muted">what the server runs with when it starts next</dd>
+    <dt>Model</dt><dd><code>{{.Settings.Get "QWEN_REPO"}}</code>{{with .Settings.Get "QWEN_PRESET"}} (preset {{.}}){{end}}</dd>
+    <dt>Commit</dt><dd><code>{{.Settings.Get "QWEN_REVISION"}}</code></dd>
+    <dt>Window</dt><dd>{{if .Status.WindowTokens}}{{tokens .Status.WindowTokens}} tokens served{{else}}{{.Settings.Get "QWEN_CONTEXT"}} tokens asked for{{end}}</dd>
+    <dt>Replies</dt><dd>up to {{.Settings.Get "QWEN_MAX_OUTPUT"}} tokens, temperature {{.Settings.Get "QWEN_TEMP"}}</dd>
+    <dt>Cache</dt><dd>{{.Settings.Get "QWEN_KV_BITS"}}-bit, {{.Settings.Get "QWEN_PROMPT_CACHE_ENTRIES"}} conversations kept</dd>
+    {{if .Status.ResidentBytes}}<dt>Memory</dt><dd>{{gib .Status.ResidentBytes}} held by the server now</dd>{{end}}
+  </dl>
+  <div id="server-notice">{{template "notice" .Notice}}</div>
+  <details class="log" {{if ne .Status.State "running"}}open{{end}}>
+    <summary>Server log <span class="muted">of the last server started from this page, in state/logs/serve-qwen.log</span></summary>
+    <pre class="console">{{lastLines .Status.Log 60}}</pre>
+  </details>
+</div>{{end}}
+
+{{define "job-table"}}{{if .}}<table class="table">
+  <thead><tr><th>Job</th><th>State</th><th>Started</th><th class="num">Time</th></tr></thead>
+  <tbody>
+  {{range .}}<tr>
+    <td><a href="/jobs/{{.ID}}">{{.Title}}</a><div class="muted mono">{{.CommandLine}}</div></td>
+    <td><span class="pill {{stateClass .State}}">{{.State}}</span></td>
+    <td class="nowrap">{{when .Started}}</td>
+    <td class="num">{{.Duration}}</td>
+  </tr>{{end}}
+  </tbody>
+</table>{{else}}<p class="muted">No jobs yet.</p>{{end}}{{end}}
+
+{{define "models-body"}}<div id="models-body">
+  {{template "notice" .Notice}}
+  {{range .Problems}}<div class="notice bad">{{.}}</div>{{end}}
+  <section class="card">
+    <div class="cardhead"><h2>Presets</h2><span class="muted">pinned to a commit and checked against the source's hashes</span></div>
+    <div class="scroll"><table class="table">
+      <thead><tr><th>Preset</th><th>Model</th><th class="num">Window</th><th>State</th><th></th></tr></thead>
+      <tbody>
+      {{$p := .}}
+      {{range .Presets}}<tr{{if eq .Name $p.Preset}} class="inuse"{{end}}>
+        <td><b>{{.Name}}</b>{{if eq .Name $p.Preset}} <span class="pill good">in use</span>{{end}}</td>
+        <td>{{.About}}<div class="muted mono">{{.Repo}}@{{short .Revision}}</div></td>
+        <td class="num">{{tokens .ContextTokens}}</td>
+        <td>{{if .Downloaded}}<span class="pill good">downloaded</span>{{else}}<span class="pill off">not downloaded</span>{{end}}</td>
+        <td><div class="rowactions">
+          {{if not .Downloaded}}<button class="secondary" hx-post="/jobs/setup" hx-vals='{"item": "{{.Name}}"}' hx-target="#models-notice">Download</button>{{end}}
+          {{if ne .Name $p.Preset}}<button class="secondary" hx-post="/models/preset" hx-vals='{"name": "{{.Name}}"}' hx-target="#models-body" hx-swap="outerHTML">Use</button>{{end}}
+        </div></td>
+      </tr>{{end}}
+      </tbody>
+    </table></div>
+    <div id="models-notice"></div>
+  </section>
+  <section class="card">
+    <div class="cardhead"><h2>On this Mac</h2><span class="muted">state/models</span></div>
+    {{if .Local}}<div class="scroll"><table class="table">
+      <thead><tr><th>Model</th><th>Commit</th><th class="num">Size</th><th>State</th><th></th></tr></thead>
+      <tbody>
+      {{range .Local}}<tr{{if and (eq .Name $p.Repo) (eq .Commit $p.Revision)}} class="inuse"{{end}}>
+        <td>{{.Name}}{{if and (eq .Name $p.Repo) (eq .Commit $p.Revision)}} <span class="pill good">in use</span>{{end}}</td>
+        <td class="mono">{{short .Commit}}</td>
+        <td class="num">{{gib .SizeBytes}}</td>
+        <td>{{if .Verified}}<span class="pill good">verified</span>{{else}}<span class="pill warn">incomplete</span>{{end}}</td>
+        <td><div class="rowactions">
+          <a class="button secondary" href="/discover?model={{.Name}}@{{.Commit}}">Check</a>
+          <button class="danger" hx-post="/models/remove" hx-vals='{"spec": "{{.Name}}@{{.Commit}}"}' hx-target="#models-body" hx-swap="outerHTML"
+            hx-confirm="Delete {{.Name}} at {{short .Commit}} from this Mac? It frees {{gib .SizeBytes}}; downloading it again takes a while.">Delete</button>
+        </div></td>
+      </tr>{{end}}
+      </tbody>
+    </table></div>{{else}}<p class="muted">No models downloaded yet. Download a preset above, or find one under Discover.</p>{{end}}
+  </section>
+</div>{{end}}
+
+{{define "discover-results"}}<div id="results">
+  {{if .Error}}<div class="notice bad">{{.Error}}</div>{{end}}
+  {{range .Problems}}<div class="notice warn">{{.}}</div>{{end}}
+  {{if .Results}}<div class="card scroll"><table class="table">
+    <thead><tr><th>Model</th><th>Source</th><th class="num">Downloads</th><th class="num">Size</th><th>Updated</th><th></th></tr></thead>
+    <tbody>
+    {{range .Results}}<tr>
+      <td><a href="{{.URL}}" target="_blank" rel="noopener">{{.Name}}</a>{{if .Task}}<div class="muted">{{.Task}}</div>{{end}}</td>
+      <td><span class="pill">{{.Source}}</span></td>
+      <td class="num">{{count .Downloads}}</td>
+      <td class="num">{{gib .SizeBytes}}</td>
+      <td class="nowrap">{{if ge (len .Updated) 10}}{{slice .Updated 0 10}}{{end}}</td>
+      <td><button class="secondary" hx-get="/discover/info" hx-vals='{"model": "{{.Name}}"}' hx-target="#detail" hx-indicator="#detail-busy">Check</button></td>
+    </tr>{{end}}
+    </tbody>
+  </table></div>{{else if and .Searched (not .Error)}}<p class="muted">No MLX models match.</p>{{end}}
+</div>{{end}}
+
+{{define "model-info"}}<div class="card">
+  <div class="cardhead"><h2>{{.Name}}</h2><a href="{{.URL}}" target="_blank" rel="noopener">Model card</a></div>
+  <dl class="facts">
+    <dt>Commit</dt><dd><code>{{.Commit}}</code></dd>
+    <dt>Weights</dt><dd>{{gib .WeightsBytes}} loaded, {{gib .DownloadBytes}} to download</dd>
+    <dt>Architecture</dt><dd class="{{if .ArchitectureSupported}}good{{else}}bad{{end}}">{{if .ModelType}}{{.ModelType}}{{else}}?{{end}}{{if .ArchitectureSupported}}, supported by mlx-lm{{else}}, not supported by this mlx-lm{{end}}</dd>
+    <dt>Tool calls</dt><dd class="{{if .ToolParser}}good{{else}}bad{{end}}">{{if .ToolParser}}{{.ToolParser}} parser{{else}}no parser found; coding agents cannot use it{{end}}</dd>
+    <dt>Context</dt><dd>{{tokens .ConfigContextTokens}} tokens in config.json; check the model card</dd>
+    <dt>Memory</dt><dd>{{if .EstimateProblem}}<span class="warn">{{.EstimateProblem}}</span>{{else if .Fits}}<span class="good">fits: {{tokens .WindowTokens}} tokens of context within the {{gib .GPULimitBytes}} the GPU may use</span>{{else}}<span class="bad">does not fit: only {{tokens .WindowTokens}} tokens of context within the {{gib .GPULimitBytes}} the GPU may use</span>{{end}}</dd>
+    <dt>Serve</dt><dd><code>{{.ServeCommand}}</code></dd>
+  </dl>
+  <div class="row">
+    {{if .Downloaded}}<button class="secondary" disabled>Downloaded</button>{{else}}<button class="primary" hx-post="/jobs/download" hx-vals='{"model": "{{.Name}}@{{.Commit}}"}' hx-target="#info-notice">Download {{gib .DownloadBytes}}</button>{{end}}
+    <button class="secondary" hx-post="/models/use" hx-vals='{"name": "{{.Name}}", "commit": "{{.Commit}}", "context": "{{.ConfigContextTokens}}", "from": "discover"}' hx-target="#info-notice">Use this model</button>
+  </div>
+  <div id="info-notice"></div>
+</div>{{end}}
+
+{{define "job-output"}}<div id="job-output" {{if not .Done}}hx-get="/fragments/jobs/{{.Job.ID}}" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>
+  <pre class="console tall" data-follow>{{.Output}}</pre>
+</div>{{end}}
+
+{{define "settings-form"}}<form id="settings-form" class="settings" hx-post="/settings" hx-swap="outerHTML" hx-disabled-elt="find button">
+  {{if .Error}}<div class="notice bad">{{.Error}}</div>{{end}}
+  {{range .Groups}}<section class="card">
+    <h2>{{.Title}}</h2>
+    {{range .Settings}}<div class="setting">
+      <label for="set-{{.Key}}"><code>{{.Key}}</code>
+        {{if eq .Source "environment"}}<span class="pill warn" title="Set in the environment of ./bin/web-ui, which wins over the file">environment</span>{{else if eq .Source "puny.conf"}}<span class="pill good">puny.conf</span>{{else}}<span class="pill off">default</span>{{end}}</label>
+      {{if eq .Source "environment"}}<input id="set-{{.Key}}" value="{{.Value}}" disabled>
+      {{else}}<input id="set-{{.Key}}" name="set.{{.Key}}" value="{{if eq .Source "puny.conf"}}{{.Value}}{{end}}" placeholder="{{if .Value}}{{.Value}} (default){{else}}default{{end}}" autocomplete="off" spellcheck="false">
+      <input type="hidden" name="loaded.{{.Key}}" value="{{if eq .Source "puny.conf"}}{{.Value}}{{end}}">{{end}}
+      <div class="help muted">{{.Help}}</div>
+    </div>{{end}}
+  </section>{{end}}
+  <div class="savebar">
+    {{template "notice" .Notice}}
+    <span class="grow"></span>
+    <button class="secondary" name="then" value="save">Save</button>
+    <button class="primary" name="then" value="restart">Save and restart server</button>
+  </div>
+</form>{{end}}
+
+{{define "file-form"}}<form id="file-form" hx-post="/settings/file" hx-swap="outerHTML" hx-disabled-elt="find button">
+  {{if .Error}}<div class="notice bad">{{.Error}}</div>{{end}}
+  <p class="muted"><code>{{.Path}}</code> is the settings file every <code>./bin</code> command reads. Saving checks the whole file the way <code>./bin/config set</code> checks a change; a file the scripts would refuse is never written. An empty file removes it, so every setting has its default.</p>
+  <textarea name="text" class="editor" spellcheck="false" autocomplete="off" rows="22" placeholder="# There is no puny.conf yet, so every setting has its default.&#10;# Add one KEY=VALUE per line, for example:&#10;QWEN_PRESET=small&#10;QWEN_TEMP=0.7">{{.Text}}</textarea>
+  <input type="hidden" name="hash" value="{{.Hash}}">
+  <div class="savebar">
+    {{template "notice" .Notice}}
+    <span class="grow"></span>
+    <button class="secondary" name="then" value="save">Save</button>
+    <button class="primary" name="then" value="restart">Save and restart server</button>
+  </div>
+</form>{{end}}
+
+{{define "settings-tabs"}}<nav class="tabs" hx-boost="true"><a href="/settings"{{if eq . "form"}} class="current"{{end}}>Settings</a><a href="/settings/file"{{if eq . "file"}} class="current"{{end}}>puny.conf</a><a href="/settings/about"{{if eq . "about"}} class="current"{{end}}>About</a></nav>{{end}}

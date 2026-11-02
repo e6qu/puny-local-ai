@@ -56,6 +56,30 @@ def get_json(url, with_headers=False):
         raise SourceError(f"cannot read {url}: {e}") from e
 
 
+def get_range(url, start, length):
+    """length bytes of the file at url from start, by an HTTP range request.
+
+    A server that ignores the range would send the whole file, which for
+    weights is gigabytes, so anything but 206 with exactly that range is
+    refused before the body is read.
+    """
+    end = start + length - 1
+    request = urllib.request.Request(url, headers={"User-Agent": "puny-local-ai", "Range": f"bytes={start}-{end}"})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            if response.status != 206 or not (response.headers.get("Content-Range") or "").startswith(f"bytes {start}-{end}/"):
+                raise SourceError(f"{url} did not answer with bytes {start}-{end} (HTTP {response.status})")
+            data = response.read(length + 1)
+    except urllib.error.HTTPError as e:
+        e.close()
+        raise SourceError(f"{url} answered HTTP {e.code}") from e
+    except OSError as e:
+        raise SourceError(f"cannot read {url}: {e}") from e
+    if len(data) != length:
+        raise SourceError(f"{url} sent {len(data)} bytes for a {length}-byte range")
+    return data
+
+
 def modelscope_data(url):
     data = get_json(url)
     if not (isinstance(data, dict) and data.get("Code") == 200 and "Data" in data):

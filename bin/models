@@ -6,6 +6,10 @@
 #                                           whether it fits, how to serve it
 #   ./bin/models download MODEL[@REVISION]  download and verify at a commit
 #   ./bin/models list                       what is in state/models
+#   ./bin/models presets [--json]           the pinned models and whether
+#                                           each is downloaded
+#   ./bin/models remove MODEL@COMMIT        delete a downloaded model, unless
+#                                           a running server uses it
 #
 # MODEL is a Hugging Face repository such as mlx-community/Qwen3.5-4B-4bit, or
 # modelscope:REPO for the copy on ModelScope. REVISION defaults to main and is
@@ -18,7 +22,7 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 source "$PUNY_ROOT/lib/mlx.sh"
 
-usage="usage: $PUNY_ROOT/bin/models search QUERY | info MODEL[@REVISION] | download MODEL[@REVISION] | list"
+usage="usage: $PUNY_ROOT/bin/models search QUERY | info MODEL[@REVISION] | download MODEL[@REVISION] | list | presets [--json] | remove MODEL@COMMIT"
 [[ $# -gt 0 ]] || die "$usage"
 command="$1"
 shift
@@ -47,6 +51,48 @@ except sources.SourceError as e:
     echo "Check it with:  $PUNY_ROOT/bin/models info $repo@$revision"
     echo "Serve it with:  QWEN_REPO=$repo QWEN_REVISION=$revision QWEN_CONTEXT=TOKENS $PUNY_ROOT/bin/serve-qwen"
     echo "                (TOKENS is the context window its model card states)"
+    ;;
+  presets)
+    [[ $# -eq 0 || ( $# -eq 1 && "$1" == --json ) ]] || die "usage: $PUNY_ROOT/bin/models presets [--json]"
+    for name in "${MODEL_PRESETS[@]}"; do
+      preset_info "$name"
+      downloaded=no
+      [[ -f "$(model_dir_for "$preset_repo" "$preset_revision")/.verified" ]] && downloaded=yes
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$preset_repo" "$preset_revision" "$preset_context" \
+        "$preset_temp" "$downloaded" "$preset_about"
+    done | python3 -I -c '
+import json, sys
+rows = []
+for line in sys.stdin.read().splitlines():
+    name, repo, revision, context, temp, downloaded, about = line.split("\t")
+    rows.append({"name": name, "repo": repo, "revision": revision, "context_tokens": int(context),
+                 "temp": temp, "downloaded": downloaded == "yes", "about": about})
+if sys.argv[1] == "--json":
+    print(json.dumps(rows))
+else:
+    for r in rows:
+        print("%-13s %-15s %s" % (r["name"], "downloaded" if r["downloaded"] else "not downloaded", r["about"]))
+' "${1:-}"
+    ;;
+  remove)
+    [[ $# -eq 1 && "$1" == *@* ]] || die "usage: $PUNY_ROOT/bin/models remove MODEL@COMMIT"
+    repo="${1%@*}"
+    revision="${1##*@}"
+    [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die "give the full 40-character commit, as ./bin/models list shows it"
+    [[ "$repo" =~ ^(modelscope:)?[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "$repo is not a model name such as org/model"
+    dir="$(model_dir_for "$repo" "$revision")"
+    [[ -d "$dir" ]] || die "$repo at $revision is not downloaded; ./bin/models list shows what is"
+    for record in "$PUNY_ROOT"/state/served/port-*; do
+      [[ -f "$record" ]] || continue
+      pid=""
+      read -r pid _ < "$record" || true
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      if ps -p "$pid" -o command= | grep -qF -- "--model-dir $dir"; then
+        die "the server (pid $pid) is running $repo; stop it first"
+      fi
+    done
+    rm -rf "$dir"
+    echo "Removed $repo at $revision ($dir)."
     ;;
   *) die "$usage" ;;
 esac

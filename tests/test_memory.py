@@ -38,6 +38,11 @@ GLIMMER = {
 
 
 class SizesTest(unittest.TestCase):
+    def test_vm_stat_sample_matches_the_web_ui(self):
+        # ui/system_test.go expects the same figure from the Go port.
+        sample = (REPO / "ui" / "testdata" / "vm_stat.txt").read_text()
+        self.assertEqual(memory.available_from_vm_stat(sample), 5800263680)
+
     def test_parse_size(self):
         self.assertEqual(memory.parse_bytes("512M"), 512 * 2**20)
         self.assertEqual(memory.parse_bytes("2g"), 2 * GIB)
@@ -229,6 +234,38 @@ Pages occupied by compressor:            222739.
 
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
             memory.weights_bytes(d)
+
+    def test_weights_leave_out_what_the_model_drops(self):
+        import json
+        import struct
+        import tempfile
+        from pathlib import Path
+
+        def safetensors(path, tensors):
+            # tensors: name -> byte count; the data follows the header in order.
+            header, offset = {"__metadata__": {"format": "mlx"}}, 0
+            for name, size in tensors.items():
+                header[name] = {"dtype": "U8", "shape": [size], "data_offsets": [offset, offset + size]}
+                offset += size
+            text = json.dumps(header).encode()
+            path.write_bytes(struct.pack("<Q", len(text)) + text + b"\0" * offset)
+            return path.stat().st_size
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            whole = safetensors(d / "model-00001-of-00002.safetensors", {"language_model.model.layers.0.w": 1000,
+                                                                          "vision_tower.blocks.0.w": 300})
+            whole += safetensors(d / "model-00002-of-00002.safetensors", {"vision_adapter.w": 20, "vision_projection.w": 5,
+                                                                          "language_model.lm_head.weight": 70})
+            (d / "config.json").write_text(json.dumps({"model_type": "muse_glimmer", "text_config": {}}))
+            self.assertEqual(memory.weights_bytes(d), whole - 325)
+            # Other models load every tensor, whatever its name.
+            (d / "config.json").write_text(json.dumps({"model_type": "qwen3_5_moe"}))
+            self.assertEqual(memory.weights_bytes(d), whole)
+            (d / "model-00002-of-00002.safetensors").write_bytes(b"\xff" * 8 + b"{}")
+            (d / "config.json").write_text(json.dumps({"model_type": "muse_glimmer"}))
+            with self.assertRaisesRegex(SystemExit, "not a safetensors file"):
+                memory.weights_bytes(d)
 
 
 if __name__ == "__main__":

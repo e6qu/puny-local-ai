@@ -1,0 +1,19 @@
+{{define "content"}}
+<div class="pagehead">
+  <h1>{{.Data.Job.Title}} <span class="pill {{stateClass .Data.Job.State}}">{{.Data.Job.State}}</span></h1>
+  <p class="muted">Started {{when .Data.Job.Started}}, {{if .Data.Job.Running}}running for{{else}}took{{end}} {{.Data.Job.Duration}}. Output is kept in <code>state/jobs/{{.Data.Job.ID}}/output</code>.</p>
+</div>
+<section class="card">
+  <div class="cardhead">
+    <code class="wrap">{{.Data.Job.CommandLine}}</code>
+    {{if .Data.Job.Running}}<button class="danger" hx-post="/jobs/{{.Data.Job.ID}}/stop" hx-target="#job-notice" hx-confirm="Stop {{.Data.Job.Title}}? Its work so far is kept, but the run ends now.">Stop</button>{{end}}
+  </div>
+  <div id="job-notice"></div>
+  {{template "job-output" .Data}}
+</section>
+{{if .Data.Job.Folder}}<section class="card">
+  <div class="cardhead"><h2>Problem folder</h2><code>{{.Data.Job.Folder}}</code></div>
+  {{range .Data.Files}}<details class="file"{{if eq .Name "solution.py"}} open{{end}}><summary><code>{{.Name}}</code></summary><pre class="console">{{.Text}}</pre></details>{{else}}<p class="muted">Nothing written yet.</p>{{end}}
+</section>{{end}}
+{{if or (eq .Data.Job.Kind "bench") (eq .Data.Job.Kind "evals")}}<p><a href="/benchmarks">See every result on the Benchmarks page.</a></p>{{end}}
+{{end}}

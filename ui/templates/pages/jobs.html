@@ -1,0 +1,4 @@
+{{define "content"}}
+<div class="pagehead"><h1>Jobs</h1><p class="muted">Downloads, setup, team-solve runs, benchmarks and smoke tests started here. Each runs on its own, keeps running if this page or <code>./bin/web-ui</code> stops, and keeps its output in <code>state/jobs/</code>.</p></div>
+<section class="card">{{template "job-table" .Data}}</section>
+{{end}}

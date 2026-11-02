@@ -1,17 +1,10 @@
-"""puny.conf: lib/common.sh's loader, lib/config.py, bin/config, and the web UI's settings and server control."""
+"""puny.conf: lib/common.sh's loader, lib/config.py and bin/config; tests/test_webui.py covers the web UI's side."""
 
-import http.server
 import json
-import os
 import re
-import signal
 import sys
 import tempfile
-import threading
-import time
 import unittest
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from helpers import REPO, Sandbox, free_port
@@ -19,7 +12,6 @@ from test_setup import bash
 
 sys.path.insert(0, str(REPO / "lib"))
 import config  # noqa: E402
-import webui  # noqa: E402
 
 KAT = "mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B"
 SMALL_REPO = "mlx-community/Qwen3.5-4B-4bit"
@@ -174,6 +166,30 @@ class ConfigCommandTest(unittest.TestCase):
         env = {"QWEN_REPO": "org/m", "QWEN_REVISION": "a" * 40, "QWEN_CONTEXT": "4096"}
         self.assertNotEqual(self.config("set", "QWEN_PRESET=huge", env=env).returncode, 0)
 
+    def test_raw_and_replace(self):
+        self.assertEqual(self.config("raw").stdout, "")
+        result = self.box.run(["bin/config", "replace"], input="# notes kept\nQWEN_PRESET=small\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.config("raw").stdout, "# notes kept\nQWEN_PRESET=small\n")
+        self.conf.chmod(0o600)
+        for text, message in [("QWEN_KV_BITS=3\n", "QWEN_KV_BITS must be 4 or 8"),
+                              ("NOPE=1\n", "the new puny.conf line 1: NOPE is not a puny-local-ai setting"),
+                              ("not a setting\n", "the new puny.conf line 1 is not KEY=VALUE")]:
+            with self.subTest(text):
+                result = self.box.run(["bin/config", "replace"], input=text)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertIn("nothing was saved", result.stderr)
+                self.assertEqual(self.conf.read_text(), "# notes kept\nQWEN_PRESET=small\n")
+        result = self.box.run(["bin/config", "replace"], input="QWEN_TEMP=0.5\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.conf.stat().st_mode & 0o777, 0o600)
+        self.assertEqual([p.name for p in self.box.root.glob(".puny.conf.*")], [])
+        result = self.box.run(["bin/config", "replace"], input="\n  \n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("every setting has its default", result.stdout)
+        self.assertFalse(self.conf.exists())
+
     def test_switching_to_another_model_in_one_change(self):
         self.config("set", "QWEN_PRESET=small")
         result = self.config("set", "QWEN_PRESET=", "QWEN_REPO=org/m", f"QWEN_REVISION={'a' * 40}", "QWEN_CONTEXT=4096")
@@ -198,122 +214,6 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertEqual(args[args.index("--port") + 1], str(port))
         self.assertEqual(args[args.index("--temp") + 1], "0.3")
         self.assertIn(SMALL_REPO.replace("/", "--"), args[args.index("--model-dir") + 1])
-
-
-# A stand-in for bin/serve-qwen: answers /health at MLX_BASE_URL and records
-# itself as the real one does, with lib/serve.py in its command line.
-FAKE_SERVE = r'''#!/usr/bin/env bash
-set -euo pipefail
-source "$(dirname "$0")/../lib/common.sh"
-mkdir -p "$PUNY_ROOT/state/served"
-echo "$$ 4096" > "$PUNY_ROOT/state/served/port-$MLX_PORT"
-exec /usr/bin/python3 -I -c '
-import http.server, sys
-class H(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"{\"status\": \"ok\"}")
-http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
-' "$MLX_PORT" "$PUNY_ROOT/lib/serve.py"
-'''
-
-
-class WebUiSettingsTest(unittest.TestCase):
-    """The web UI's settings and server control, with a stand-in server."""
-
-    def setUp(self):
-        self.box = Sandbox()
-        self.addCleanup(self.box.cleanup)
-        serve = self.box.root / "bin" / "serve-qwen"
-        serve.write_text(FAKE_SERVE)
-        self.port = free_port()
-        (self.box.root / "puny.conf").write_text(f"MLX_BASE_URL=http://127.0.0.1:{self.port}/v1\n")
-        # The commands the page runs see only the sandbox's environment.
-        saved = dict(os.environ)
-        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
-        os.environ.clear()
-        os.environ.update(self.box.env())
-        self.server = webui.Server(self.box.root)
-        self.addCleanup(self.stop_all)
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a: None)
-        self.origin = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        self.httpd.RequestHandlerClass = webui.make_handler(self.origin, self.box.root, webui.Downloads(self.box.root),
-                                                            self.server)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
-
-    def stop_all(self):
-        for pid, _ in self.server.running():
-            os.kill(pid, signal.SIGTERM)
-
-    def call(self, path, body=None):
-        request = urllib.request.Request(self.origin + path, data=json.dumps(body).encode() if body is not None else None,
-                                         headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as e:
-            with e:
-                return e.code, json.loads(e.read())
-
-    def wait_for(self, state):
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            status = self.call("/api/status")[1]
-            if status["state"] == state:
-                return status
-            time.sleep(0.2)
-        self.fail(f"the server never became {state}: {status}")
-
-    def test_settings_round_trip(self):
-        status, body = self.call("/api/config")
-        self.assertEqual(status, 200)
-        settings = {s["key"]: s for s in body["settings"]}
-        self.assertEqual(settings["MLX_BASE_URL"]["source"], "puny.conf")
-        self.assertIn("Where the model server listens", settings["MLX_BASE_URL"]["help"])
-        status, body = self.call("/api/config", {"set": {"QWEN_TEMP": "0.4"}, "unset": ["MLX_BASE_URL"]})
-        self.assertEqual(status, 200, body)
-        self.assertEqual(config.read(self.box.root / "puny.conf"), {"QWEN_TEMP": "0.4"})
-        status, body = self.call("/api/config", {"set": {"QWEN_KV_BITS": "3"}})
-        self.assertEqual(status, 400)
-        self.assertIn("QWEN_KV_BITS must be 4 or 8", body["error"])
-        self.assertEqual(self.call("/api/config", {})[0], 400)
-
-    def test_start_restart_and_stop(self):
-        self.assertEqual(self.call("/api/status")[1]["state"], "stopped")
-        self.assertEqual(self.call("/api/server", {"action": "start"})[0], 200)
-        running = self.wait_for("running")
-        self.assertEqual(running["window_tokens"], 4096)
-        first = self.server.running()
-        self.assertEqual(len(first), 1)
-        status, body = self.call("/api/server", {"action": "start"})
-        self.assertEqual(status, 400)
-        self.assertIn("already runs", body["error"])
-
-        # A new port in the settings: the old server is found and stopped.
-        new_port = free_port()
-        self.call("/api/config", {"set": {"MLX_BASE_URL": f"http://127.0.0.1:{new_port}/v1"}})
-        self.assertIn(f"runs on port {self.port}", self.call("/api/status")[1]["elsewhere"])
-        self.assertEqual(self.call("/api/server", {"action": "restart"})[0], 200)
-        self.wait_for("running")
-        self.assertEqual([port for _, port in self.server.running()], [str(new_port)])
-
-        self.assertEqual(self.call("/api/server", {"action": "stop"})[0], 200)
-        self.assertEqual(self.server.running(), [])
-        self.assertEqual(self.call("/api/status")[1]["state"], "stopped")
-        self.assertEqual(self.call("/api/server", {"action": "fly"})[0], 400)
-
-    def test_a_server_that_fails_to_start_shows_why(self):
-        (self.box.root / "bin" / "serve-qwen").write_text("#!/usr/bin/env bash\necho 'error: only 1 GiB is free' >&2\nexit 1\n")
-        self.call("/api/server", {"action": "start"})
-        status = self.wait_for("stopped (exit 1)")
-        self.assertIn("only 1 GiB is free", status["log"])
-
-    def test_integrate_reports_its_error(self):
-        status, body = self.call("/api/integrate", {})
-        self.assertEqual(status, 400)
-        self.assertIn("no coding agent to set up", body["error"])
 
 
 if __name__ == "__main__":

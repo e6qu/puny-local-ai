@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prints the license of everything this project downloads, read from the
 # pinned sources: the Python packages installed from lib/mlx-lm.lock, the
-# pinned agent releases on npm, and the model cards at the pinned commits.
+# pinned agent releases on npm, Go and HTMX for the web UI, and the model
+# cards at the pinned commits.
 # Output is Markdown tables, ready to paste into THIRD_PARTY.md.
 
 set -euo pipefail
@@ -9,6 +10,7 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 source "$PUNY_ROOT/lib/mlx.sh"
 source "$PUNY_ROOT/lib/agents.sh"
+source "$PUNY_ROOT/lib/webui.sh"
 require_command npm "Install Node 22.19 or newer: brew install node"
 
 mlx_env_ready || die "the mlx-lm environment is not installed; run $PUNY_ROOT/bin/setup mlx"
@@ -48,6 +50,21 @@ for spec in "$OPENCODE_PACKAGE@$OPENCODE_VERSION" "$PI_PACKAGE@$PI_VERSION"; do
   [[ -n "$license" ]] || die "$spec declares no license"
   echo "| ${spec%@*} | ${spec##*@} | $license | ${repo#git+} |"
 done
+
+echo
+echo "## Web UI build (lib/webui.sh)"
+echo
+echo "| Component | Version | License | Source |"
+echo "|---|---|---|---|"
+ensure_go >/dev/null
+ensure_htmx >/dev/null
+# Each license file is checked for its license's own words, not assumed.
+grep -q "Neither the name of Google LLC nor the names of its" "$GO_ROOT/LICENSE" \
+  || die "$GO_ROOT/LICENSE is not the BSD-3-Clause license it was"
+grep -q "^Zero-Clause BSD" "$WEB_UI_DIR/htmx-LICENSE" \
+  || die "$WEB_UI_DIR/htmx-LICENSE is not the 0BSD license it was"
+echo "| Go (toolchain, and the standard library built into state/web-ui/puny-ui) | $GO_VERSION | BSD-3-Clause | $GO_URL |"
+echo "| HTMX | $HTMX_VERSION | 0BSD | $HTMX_URL |"
 
 echo
 echo "## Models (Hugging Face, license from each model card at the pinned commit)"

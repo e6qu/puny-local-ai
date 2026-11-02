@@ -1,0 +1,16 @@
+{{define "content"}}
+<div class="pagehead"><h1>Discover</h1><p class="muted">Search MLX models on Hugging Face and ModelScope. <b>Check</b> says whether one fits in the memory the GPU may use and whether coding agents can use its tool calls. Downloads are pinned to a commit and checked against the source's hashes.</p></div>
+<form class="card row" action="/discover" method="get" hx-get="/discover" hx-target="#results" hx-swap="outerHTML" hx-push-url="true" hx-indicator="#search-busy">
+  <input type="search" name="q" value="{{.Data.Query}}" placeholder="for example qwen3.6 coder" required class="grow">
+  <select name="source" aria-label="Source">
+    <option value="all"{{if eq .Data.Source "all"}} selected{{end}}>Hugging Face and ModelScope</option>
+    <option value="huggingface"{{if eq .Data.Source "huggingface"}} selected{{end}}>Hugging Face</option>
+    <option value="modelscope"{{if eq .Data.Source "modelscope"}} selected{{end}}>ModelScope</option>
+  </select>
+  <button class="primary">Search</button>
+  <span id="search-busy" class="busy">Searching…</span>
+</form>
+<span id="detail-busy" class="busy">Reading the model's files…</span>
+<div id="detail">{{with .Data.Model}}<div hx-get="/discover/info" hx-vals='{"model": "{{.}}"}' hx-trigger="load" hx-swap="outerHTML" class="card muted">Reading {{.}}…</div>{{end}}</div>
+{{template "discover-results" .Data}}
+{{end}}

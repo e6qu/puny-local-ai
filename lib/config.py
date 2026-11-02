@@ -2,7 +2,8 @@
 
 Usage:
   python3 -I config.py keys                     print the setting names, one per line
-  python3 -I config.py read FILE                print the file's settings as JSON
+  python3 -I config.py read FILE [NAME]         print the file's settings as JSON;
+                                                errors call the file NAME
   python3 -I config.py write FILE KEY=VALUE...  set settings; an empty VALUE removes one
   python3 -I config.py describe                 print every setting with its group and help, as JSON
 
@@ -94,9 +95,9 @@ def parse(text, path="puny.conf"):
     return values
 
 
-def read(path):
+def read(path, name=None):
     path = Path(path)
-    return parse(path.read_text(), path) if path.exists() else {}
+    return parse(path.read_text(), name or path) if path.exists() else {}
 
 
 def updated_text(text, changes):
@@ -163,8 +164,8 @@ def main():
             print("\n".join(KEYS))
         elif args == ["describe"]:
             print(json.dumps([{"key": k, "group": g, "help": h} for k, g, h in SETTINGS]))
-        elif len(args) == 2 and args[0] == "read":
-            print(json.dumps(read(args[1])))
+        elif len(args) in (2, 3) and args[0] == "read":
+            print(json.dumps(read(*args[1:])))
         elif len(args) >= 3 and args[0] == "write":
             changes = {}
             for pair in args[2:]:

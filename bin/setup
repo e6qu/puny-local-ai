@@ -6,15 +6,17 @@
 #   ./bin/setup                      menu
 #   ./bin/setup mlx kat opencode pi  the named items, no questions
 #
-# Items: mlx, the model presets (kat, reap, small), opencode, pi.
+# Items: mlx, the model presets (kat, reap, small and the larger ones),
+# opencode, pi, and web-ui (Go and HTMX, to build ./bin/web-ui).
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 source "$PUNY_ROOT/lib/mlx.sh"
 source "$PUNY_ROOT/lib/agents.sh"
+source "$PUNY_ROOT/lib/webui.sh"
 
-ITEMS=(mlx "${MODEL_PRESETS[@]}" opencode pi)
+ITEMS=(mlx "${MODEL_PRESETS[@]}" opencode pi web-ui)
 DEFAULT_ITEMS=(mlx kat opencode pi)
 
 describe() {
@@ -22,6 +24,7 @@ describe() {
     mlx) echo "mlx-lm 0.32.2 and its dependencies, from lib/mlx-lm.lock" ;;
     opencode) echo "OpenCode coding agent" ;;
     pi) echo "Pi coding agent" ;;
+    web-ui) echo "the web UI, built with Go $GO_VERSION and HTMX $HTMX_VERSION" ;;
     *) preset_info "$1"; echo "model: $preset_about" ;;
   esac
 }
@@ -30,6 +33,7 @@ status() {
   local version
   case "$1" in
     mlx) if mlx_env_ready; then echo "installed"; else echo "not installed"; fi ;;
+    web-ui) if [[ -x "$WEB_UI_BIN" && -f "$WEB_UI_DIR/.built" && "$(<"$WEB_UI_DIR/.built")" == "$(web_ui_stamp)" ]]; then echo "built"; else echo "not built"; fi ;;
     opencode | pi)
       version="$(installed_version "$1")"
       if [[ -n "$version" ]]; then echo "installed $version"; else echo "not installed"; fi
@@ -51,6 +55,7 @@ install_one() {
   case "$1" in
     mlx) ensure_mlx_env ;;
     opencode | pi) "$PUNY_ROOT/bin/install-agents" "$1" ;;
+    web-ui) ensure_web_ui ;;
     *)
       preset_info "$1"
       ensure_model "$preset_repo" "$preset_revision"

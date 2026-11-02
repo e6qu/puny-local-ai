@@ -1,24 +1,18 @@
-"""lib/sources.py, lib/models.py, lib/webui.py and bin/models, against fake Hugging Face and ModelScope servers."""
+"""lib/sources.py, lib/models.py and bin/models, against fake Hugging Face and ModelScope servers."""
 
 import hashlib
-import http.server
 import json
-import os
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-from helpers import REPO, FakeServer, Sandbox, mlx_health_routes, record_served
+from helpers import REPO, FakeServer, Sandbox
 
 sys.path.insert(0, str(REPO / "lib"))
 import models  # noqa: E402
 import sources  # noqa: E402
-import webui  # noqa: E402
 
 COMMIT = "a" * 40
 OLD = "b" * 40
@@ -156,6 +150,31 @@ class ModelsTest(SourcesCase):
         self.assertIn(f"QWEN_REPO=mlx-community/Tiny-4bit QWEN_REVISION={COMMIT} QWEN_CONTEXT=40960", info["serve_command"])
         self.assertFalse(info["downloaded"])
 
+    def test_info_leaves_out_the_weights_the_model_drops(self):
+        import struct
+        header = json.dumps({"vision_tower.w": {"dtype": "U8", "shape": [300], "data_offsets": [0, 300]},
+                             "language_model.model.w": {"dtype": "U8", "shape": [1000], "data_offsets": [300, 1300]}}).encode()
+        blob = struct.pack("<Q", len(header)) + header + b"\0" * 1300
+        ranges = []
+
+        def serve_range(handler, body):
+            start, end = (int(n) for n in handler.headers["Range"].removeprefix("bytes=").split("-"))
+            ranges.append((start, end))
+            return blob[start:end + 1], {"Content-Range": f"bytes {start}-{end}/{len(blob)}"}
+
+        config = json.dumps(CONFIG | {"model_type": "muse_glimmer"}).encode()
+        self.hf.routes[f"GET /mlx-community/Tiny-4bit/resolve/{COMMIT}/config.json"] = (200, config)
+        self.hf.routes[f"GET /mlx-community/Tiny-4bit/resolve/{COMMIT}/model.safetensors"] = (206, serve_range)
+        tree = self.hf.routes[f"GET /api/models/mlx-community/Tiny-4bit/tree/{COMMIT}"][1]
+        tree[2]["size"] = len(blob)
+        self.assertEqual(models.info("mlx-community/Tiny-4bit")["weights_bytes"], len(blob) - 300)
+        self.assertEqual(ranges, [(0, 7), (8, 8 + len(header) - 1)], "only the header is read")
+
+        # A server that ignores the range is refused before the body is read.
+        self.hf.routes[f"GET /mlx-community/Tiny-4bit/resolve/{COMMIT}/model.safetensors"] = (200, blob)
+        with self.assertRaisesRegex(sources.SourceError, "did not answer with bytes 0-7"):
+            models.info("mlx-community/Tiny-4bit")
+
     def test_info_on_a_model_that_does_not_fit(self):
         models.gpu_limit_bytes = lambda: len(WEIGHTS)
         info = models.info("mlx-community/Tiny-4bit")
@@ -191,79 +210,52 @@ class ModelsCommandTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("usage:", result.stderr)
 
+    def test_presets(self):
+        result = self.box.run(["bin/models", "presets", "--json"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        presets = {p["name"]: p for p in json.loads(result.stdout)}
+        self.assertEqual(presets["small"]["repo"], "mlx-community/Qwen3.5-4B-4bit")
+        self.assertEqual(presets["small"]["context_tokens"], 262144)
+        self.assertFalse(presets["small"]["downloaded"])
+        folder = self.box.root / "state" / "models" / f"mlx-community--Qwen3.5-4B-4bit@{presets['small']['revision']}"
+        folder.mkdir(parents=True)
+        (folder / ".verified").touch()
+        presets = {p["name"]: p for p in json.loads(self.box.run(["bin/models", "presets", "--json"]).stdout)}
+        self.assertTrue(presets["small"]["downloaded"])
+        self.assertIn("kat           not downloaded", self.box.run(["bin/models", "presets"]).stdout)
+
+    def test_remove(self):
+        folder = self.box.root / "state" / "models" / f"org--m@{COMMIT}"
+        (folder / "weights").mkdir(parents=True)
+        for spec, message in [("org/m", "usage:"), ("org/m@main", "full 40-character commit"),
+                              (f"../m@{COMMIT}", "not a model name"), (f"org/other@{COMMIT}", "is not downloaded")]:
+            with self.subTest(spec):
+                result = self.box.run(["bin/models", "remove", spec])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+        # A running server that uses it keeps it.
+        server = subprocess.Popen(["/usr/bin/python3", "-c", "import time; time.sleep(60)", "--model-dir", str(folder)])
+        self.addCleanup(server.wait)
+        self.addCleanup(server.kill)
+        record = self.box.root / "state" / "served" / "port-8081"
+        record.parent.mkdir(parents=True)
+        record.write_text(f"{server.pid} 4096\n")
+        result = self.box.run(["bin/models", "remove", f"org/m@{COMMIT}"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stop it first", result.stderr)
+        self.assertTrue(folder.exists())
+        server.kill()
+        server.wait()
+        result = self.box.run(["bin/models", "remove", f"org/m@{COMMIT}"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(folder.exists())
+
     def test_model_folders_for_both_sources(self):
         out = subprocess.run(
             ["bash", "-c", f'source "{self.box.root}/lib/common.sh"; source "{self.box.root}/lib/mlx.sh"; '
                            f'model_dir_for org/m {COMMIT}; echo; model_dir_for modelscope:org/m {COMMIT}'],
             env=self.box.env(), capture_output=True, text=True, check=True).stdout.split()
         self.assertEqual([Path(p).name for p in out], [f"org--m@{COMMIT}", f"modelscope--org--m@{COMMIT}"])
-
-
-class WebUiTest(unittest.TestCase):
-    """lib/webui.py's handler, with a fake model server."""
-
-    def setUp(self):
-        self.mlx = FakeServer(mlx_health_routes())
-        self.mlx.routes["POST /v1/chat/completions"] = (200, (b'data: {"choices": [{"delta": {"content": "hi"}}]}\n\ndata: [DONE]\n\n',
-                                                              {"Content-Type": "text/event-stream"}))
-        self.addCleanup(self.mlx.stop)
-        self.box = Sandbox()
-        self.addCleanup(self.box.cleanup)
-        record_served(self.box, self.mlx.base_url, 65536)
-        (self.box.root / "puny.conf").write_text(f"MLX_BASE_URL={self.mlx.base_url}\n")
-        # The commands the page runs see only the sandbox's environment.
-        saved = dict(os.environ)
-        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
-        os.environ.clear()
-        os.environ.update(self.box.env())
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), lambda *a: None)
-        self.origin = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        self.httpd.RequestHandlerClass = webui.make_handler(self.origin, self.box.root, webui.Downloads(self.box.root),
-                                                            webui.Server(self.box.root))
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
-        self.addCleanup(self.httpd.server_close)
-        self.addCleanup(self.httpd.shutdown)
-
-    def call(self, path, body=None, headers=None):
-        request = urllib.request.Request(self.origin + path, data=json.dumps(body).encode() if body is not None else None,
-                                         headers={"Content-Type": "application/json", **(headers or {})})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, response.read().decode()
-        except urllib.error.HTTPError as e:
-            with e:
-                return e.code, e.read().decode()
-
-    def test_page_and_status(self):
-        status, text = self.call("/")
-        self.assertEqual(status, 200)
-        self.assertIn("<title>puny-local-ai</title>", text)
-        status, text = self.call("/api/status")
-        self.assertEqual(json.loads(text)["state"], "running")
-        self.assertEqual(json.loads(text)["window_tokens"], 65536)
-
-    def test_chat_is_passed_through_as_default_model(self):
-        status, text = self.call("/api/chat", {"model": "other", "messages": [{"role": "user", "content": "x"}], "stream": True})
-        self.assertEqual(status, 200)
-        self.assertIn('"content": "hi"', text)
-        self.assertEqual(json.loads(self.mlx.requests[-1][2])["model"], "default_model")
-
-    def test_refuses_other_sites(self):
-        self.assertEqual(self.call("/api/status", headers={"Host": "evil.example"})[0], 403)
-        status, _ = self.call("/api/downloads", {"model": f"org/m@{COMMIT}"}, headers={"Origin": "http://evil.example"})
-        self.assertEqual(status, 403)
-
-    def test_downloads_need_a_pinned_model(self):
-        for spec in ("org/m", "org/m@main", "bad name@" + COMMIT):
-            with self.subTest(spec):
-                self.assertEqual(self.call("/api/downloads", {"model": spec})[0], 400)
-        self.assertEqual(json.loads(self.call("/api/downloads")[1]), [])
-
-    def test_chat_without_a_server(self):
-        self.mlx.stop()
-        status, text = self.call("/api/chat", {"messages": []})
-        self.assertEqual(status, 502)
-        self.assertIn("bin/serve-qwen", text)
 
 
 if __name__ == "__main__":

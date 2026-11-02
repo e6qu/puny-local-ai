@@ -8,6 +8,9 @@
 #                             opencode pi, and about 6 GiB of free memory)
 #   ./tests/run [--live] NAME   only tests whose id contains NAME
 #
+# It builds the web UI first (./bin/web-ui --build), runs its Go tests, and
+# hands the built program to the Python tests that drive it.
+#
 # Tests run the scripts from a temporary copy of the repo with their own home
 # folder, so they never touch your agent configs, state/ or ~/.
 
@@ -15,6 +18,7 @@ set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/webui.sh"
 
 live=0
 if [[ "${1:-}" == --live ]]; then
@@ -30,8 +34,16 @@ fi
 
 # The serve tests import mlx, so everything runs in the mlx-lm environment.
 ensure_mlx_env
+ensure_web_ui
+if [[ $# -eq 0 ]]; then
+  echo "Go tests of ui/:"
+  go_in_ui vet ./...
+  unformatted="$("$GO_ROOT/bin/gofmt" -l "$PUNY_ROOT/ui")"
+  [[ -z "$unformatted" ]] || die "not formatted as gofmt formats Go: $unformatted"
+  go_in_ui test -count=1 ./...
+fi
 find "$PUNY_ROOT/tests" "$PUNY_ROOT/lib" -name __pycache__ -prune -exec rm -rf {} +
 # Empty input for the whole run, so no program a test starts waits on the
 # terminal; codex exec, for one, reads extra prompt text from stdin.
-PUNY_LIVE_TESTS="$live" PYTHONDONTWRITEBYTECODE=1 \
+PUNY_LIVE_TESTS="$live" PUNY_WEB_UI_BIN="$WEB_UI_BIN" PUNY_WEB_UI_HTMX="$WEB_UI_HTMX" PYTHONDONTWRITEBYTECODE=1 \
   "$mlx_python" -m unittest discover -s "$PUNY_ROOT/tests" -t "$PUNY_ROOT/tests" "${filter[@]}" < /dev/null

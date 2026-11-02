@@ -24,6 +24,7 @@ https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb95
 import json
 import os
 import re
+import struct
 import subprocess
 from collections import namedtuple
 from pathlib import Path
@@ -76,13 +77,55 @@ def load_config(model_dir):
     return config.get("text_config", config)
 
 
+# Tensors that a model's sanitize() in mlx-lm 0.32.2 drops before loading, by
+# the model_type at the top of config.json; they never take memory. Glimmer
+# is a text-only port, so its image encoder is left on disk:
+# https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/muse_glimmer.py#L245-L250
+DROPPED_TENSOR_PREFIXES = {"muse_glimmer": ("vision_tower", "vision_adapter", "vision_projection")}
+
+
+def safetensors_header(path):
+    """The tensor table at the start of a .safetensors file: name -> dtype, shape, data_offsets."""
+    with open(path, "rb") as f:
+        size = f.read(8)
+        if len(size) != 8:
+            raise SystemExit(f"error: {path} is too short to be a safetensors file")
+        header_bytes = struct.unpack("<Q", size)[0]
+        if header_bytes > 100 * MIB:
+            raise SystemExit(f"error: {path} claims a {header_bytes}-byte header; it is not a safetensors file")
+        try:
+            return json.loads(f.read(header_bytes))
+        except ValueError as e:
+            raise SystemExit(f"error: the header of {path} is not JSON: {e}")
+
+
 def weights_bytes(model_dir):
-    # The same files mlx_lm.utils.load_model reads; add-ons in subfolders,
-    # such as OptiQ's optiq/, are never loaded.
-    files = list(Path(model_dir).glob("model*.safetensors"))
+    """What the weights take in memory once mlx-lm has loaded them.
+
+    The same files mlx_lm.utils.load_model reads; add-ons in subfolders, such
+    as OptiQ's optiq/, are never loaded. Whole files count, less any tensors
+    the model's code drops (DROPPED_TENSOR_PREFIXES), as read from each file's
+    header.
+    """
+    files = sorted(Path(model_dir).glob("model*.safetensors"))
     if not files:
         raise SystemExit(f"error: no model*.safetensors files in {model_dir}")
-    return sum(f.stat().st_size for f in files)
+    total = sum(f.stat().st_size for f in files)
+    config_path = Path(model_dir) / "config.json"
+    model_type = json.loads(config_path.read_text()).get("model_type") if config_path.is_file() else None
+    if model_type in DROPPED_TENSOR_PREFIXES:
+        for f in files:
+            total -= dropped_tensor_bytes(safetensors_header(f), model_type)
+    return total
+
+
+def dropped_tensor_bytes(header, model_type):
+    """The bytes of the tensors in one safetensors header that mlx-lm drops for model_type."""
+    prefixes = DROPPED_TENSOR_PREFIXES.get(model_type)
+    if not prefixes:
+        return 0
+    return sum(t["data_offsets"][1] - t["data_offsets"][0] for name, t in header.items()
+               if name != "__metadata__" and name.startswith(prefixes))
 
 
 class UnsupportedModel(ValueError):

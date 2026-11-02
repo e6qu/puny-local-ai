@@ -115,11 +115,11 @@ preset_info() {
       if [[ "$1" == glimmer-4 ]]; then
         preset_repo="mlx-community/Muse-Glimmer-30B-4bit"
         preset_revision="3e7677d7a40d348a3daba263a2b1c0aa41910710"
-        preset_about="Meta's Muse Glimmer at 4 bits, for a GPU limit of 20.0 GiB or more (18.1 GiB download)"
+        preset_about="Meta's Muse Glimmer at 4 bits, for a GPU limit of 16.6 GiB or more (18.1 GiB download)"
       else
         preset_repo="mlx-community/Muse-Glimmer-30B-8bit"
         preset_revision="679c45e1b331a6514a6e38076a353cc5fed21bf6"
-        preset_about="Meta's Muse Glimmer at 8 bits, for a GPU limit of 33.0 GiB or more (31.1 GiB download)"
+        preset_about="Meta's Muse Glimmer at 8 bits, for a GPU limit of 29.5 GiB or more (31.1 GiB download)"
       fi
       # "temperature = 1.0, top_p = 0.95, top_k = 64":
       # https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/README.md?code=true#L125-L129

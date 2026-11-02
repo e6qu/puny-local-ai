@@ -4,8 +4,8 @@ Run a local coding model on a 24 GiB Apple Silicon Mac with [mlx-lm](https://git
 
 - **Three coding agents work with it: OpenCode, Pi and Codex.** All three talk to the same local server, at `http://127.0.0.1:8081/v1`. One command adds the local model to their configs, and one removes it again. Your usual agent setups keep working beside it.
 - **The default model is KAT-Coder-V2.5-Dev.** It is a Qwen3.6-35B-A3B fine-tune for coding agents, pruned to fit in the 16 GiB that macOS lets the GPU use. [docs/models.md](docs/models.md) explains the choice and the benchmarks.
-- **Settings live in one file, `puny.conf`.** Edit it with `./bin/config` or on the web page's Settings tab; every command reads it, and an environment variable still wins for one run.
-- **Find other MLX models.** `./bin/models`, or the web page from `./bin/web-ui`, searches Hugging Face and ModelScope. It tells you whether a model fits in memory and can make the tool calls agents need, then downloads it pinned to a commit and checked against published hashes.
+- **Settings live in one file, `puny.conf`.** Edit it with `./bin/config`, by hand, or in the web UI's Settings, as a form or as the file; every command reads it, and an environment variable still wins for one run.
+- **Find other MLX models.** `./bin/models`, or Discover in `./bin/web-ui`, searches Hugging Face and ModelScope. It tells you whether a model fits in memory and can make the tool calls agents need, then downloads it pinned to a commit and checked against published hashes.
 - **The Mac stays responsive.** The server refuses to start, or refuses a request with an error the agent shows, rather than let macOS swap or freeze. On a 24 GiB Mac, KAT-Coder gets a 247,319-token context window, and the agents are told that number so they compact their conversations in time ([how the guards work](docs/models.md#memory-and-disk-guards)).
 - **Every download is pinned and checked.** Python packages and models are checked against recorded hashes, and npm checks the agents against the registry's integrity hash. Apart from the team-solve prompts, adapted from Memdoor under Apache-2.0, nothing third-party is stored in this repo; [THIRD_PARTY.md](THIRD_PARTY.md) lists what is downloaded and every license.
 
@@ -94,13 +94,19 @@ There are two ways in. Both need the server from `./bin/serve-qwen` running whil
 ./bin/web-ui
 ```
 
-This serves a page at `http://127.0.0.1:8090` with three tabs:
+This serves a page at `http://127.0.0.1:8090`, laid out like Docker Desktop: a sidebar of sections, and a status bar along the bottom that shows whether the server runs, which model it serves, its context window, the memory it holds, the memory and disk free, and any jobs running. The sections:
 
-- **Chat** talks to the model that `./bin/serve-qwen` is running, with its thinking shown separately. The header shows whether the server runs, which model it serves and its context window.
-- **Models** searches Hugging Face and ModelScope for MLX models. **Check** shows a model's size, whether mlx-lm can run it and parse its tool calls, and whether it fits in memory. **Download** fetches it the same way `./bin/models download` does, and **Use this model** makes it the one the server runs. The tab also lists the models already downloaded.
-- **Settings** edits `puny.conf`, with each setting's help, value and where it comes from. It also starts, stops and restarts the server, shows the server's log, and has **Update agent configs**, which runs `./bin/integrate install` so the agents learn a new address, model or context window.
+- **Server** starts, stops and restarts `./bin/serve-qwen`, shows its log, and warns when the running server was started with other settings than the ones saved.
+- **Models** lists the presets and the models downloaded to this Mac. **Use** saves a preset as the one the server runs; **Download** fetches it; **Delete** removes a downloaded model, unless a running server uses it.
+- **Discover** searches Hugging Face and ModelScope for MLX models. **Check** shows a model's size, whether mlx-lm can run it and parse its tool calls, and whether it fits in memory. **Download** fetches it the same way `./bin/models download` does, and **Use this model** makes it the one the server runs.
+- **Chat** talks to the model, with its thinking shown separately.
+- **Team-solve** writes a problem, its task and samples, into `state/team-solve/NAME/` and runs `./bin/team-solve` on it, or runs an earlier problem again. The run's page shows the plan, notes, solution, review and test logs the team wrote.
+- **Benchmarks** runs `./bin/bench-agents` and `./bin/evals` with the agents, tasks and suites you tick, and shows both reports.
+- **Agents** adds the local model to the agents' configs or removes it (`./bin/integrate`), installs OpenCode and Pi, and runs `./bin/smoke-test`.
+- **Jobs** lists every download, setup, workflow and benchmark started from the page, with its live output and a **Stop** button. Jobs keep running when the page stops, and keep their output in `state/jobs/`.
+- **Settings** (the gear) edits `puny.conf` as a form, with each setting's help, value and where it comes from, or as the file itself in an editor. Both save through `./bin/config`, so a value the scripts would refuse is never written, and **Save and restart server** applies server settings at once. The editor refuses to save over a change made in the terminal since it loaded the file.
 
-A server started from the page keeps running when the page stops; its output goes to `state/logs/serve-qwen.log`. **Stop** stops a server from this repo wherever it was started, including one in a terminal.
+The first run downloads Go and HTMX at pinned versions, checks them against their published hashes, and builds `ui/` into `state/web-ui/`; `./bin/setup web-ui` does that ahead of time. A server or job started from the page keeps running when the page stops. **Stop** stops a server from this repo wherever it was started, including one in a terminal.
 
 The page listens only on this Mac and refuses requests from other web sites. [docs/how-it-works.md](docs/how-it-works.md#the-web-ui) has the details.
 
@@ -129,7 +135,7 @@ Downloads are pinned to the commit the branch points to at that moment, and ever
 ./bin/config set QWEN_PRESET= QWEN_REPO=mlx-community/Qwen3.5-9B-6bit QWEN_REVISION=<commit from info> QWEN_CONTEXT=262144
 ```
 
-Take the context window from the model's card. Then restart `./bin/serve-qwen` and run `./bin/integrate install`, so that the agents are told the new window. **Use this model** on the web page does the same. [docs/models.md](docs/models.md#other-models-that-fit) lists candidates that were checked by hand. [docs/alternatives.md](docs/alternatives.md) surveys other local inference projects for Apple Silicon.
+Take the context window from the model's card. Then restart `./bin/serve-qwen` and run `./bin/integrate install`, so that the agents are told the new window. **Use this model** in the web UI saves the same settings; restart the server and update the agents from the Server and Agents pages. [docs/models.md](docs/models.md#other-models-that-fit) lists candidates that were checked by hand. [docs/alternatives.md](docs/alternatives.md) surveys other local inference projects for Apple Silicon.
 
 ## Solving a problem with a team of agents
 
@@ -155,13 +161,13 @@ It exits 0 when every sample passes. A step that fails, or takes longer than `TE
 
 ## Scripts
 
-- `./bin/setup [ITEM...]` installs what you name, or what you pick from a menu: `mlx` (the mlx-lm environment), the models `kat`, `reap` and `small`, `opencode` and `pi`.
+- `./bin/setup [ITEM...]` installs what you name, or what you pick from a menu: `mlx` (the mlx-lm environment), the model presets, `opencode`, `pi` and `web-ui`.
 - `./bin/serve-qwen` downloads and verifies the chosen model if needed, and runs the server in the foreground behind the memory and disk guards. It serves the Chat Completions API that OpenCode and Pi use and the Responses API that Codex uses.
 - `./bin/integrate install|uninstall|status [AGENT...]` adds the local model to the agents' own configs, or removes it.
 - `./bin/opencode-qwen`, `./bin/pi-qwen` and `./bin/codex-qwen` start each agent on the model for one run.
-- `./bin/config [show | set KEY=VALUE... | unset KEY... | check]` shows and changes the settings saved in `puny.conf`.
-- `./bin/web-ui` serves the page for chat, settings, the server and model search.
-- `./bin/models search|info|download|list` finds, checks and downloads MLX models from Hugging Face and ModelScope.
+- `./bin/config [show | set KEY=VALUE... | unset KEY... | check | raw | replace]` shows and changes the settings saved in `puny.conf`; `replace` checks a whole new file from standard input before saving it.
+- `./bin/web-ui` serves the web UI for the server, models, chat, workflows, benchmarks, agents and settings; see above.
+- `./bin/models search|info|download|list|presets|remove` finds, checks, downloads and removes MLX models from Hugging Face and ModelScope.
 - `./bin/check-tool-calls` fails unless the model answers a tool request with a structured call. Agents need structured calls to edit files and run commands.
 - `./bin/check-responses-api [BASE_URL]` fails unless the server answers the Responses API that Codex uses.
 - `./bin/smoke-test [opencode|pi|codex]` runs `./bin/check-tool-calls`, and `./bin/check-responses-api` when Codex is among the agents, then has each agent create a file and checks its contents. Without arguments it runs OpenCode, Pi and, if installed, Codex. Runs happen in the system temp folder and stay out of your session history. `SMOKE_TIMEOUT` caps each agent at 300 seconds by default.
@@ -182,7 +188,7 @@ Every setting has a working default. To change one for good, save it in `puny.co
 ./bin/config unset QWEN_TEMP                  # back to the default
 ```
 
-`./bin/config set` checks the file as it would be after the change, and saves nothing if a command would refuse a value. The Settings tab of `./bin/web-ui` makes the same changes. You can also edit `puny.conf` by hand. It holds one `KEY=VALUE` per line, with `#` comments. Values are taken literally, never run as shell code. The file is ignored by git.
+`./bin/config set` checks the file as it would be after the change, and saves nothing if a command would refuse a value. The web UI's Settings make the same changes, as a form or by editing the file. You can also edit `puny.conf` by hand. It holds one `KEY=VALUE` per line, with `#` comments. Values are taken literally, never run as shell code. The file is ignored by git.
 
 An environment variable of the same name wins over the file, for one run: `QWEN_PRESET=small ./bin/serve-qwen`. The model is one choice: when the environment names any of `QWEN_PRESET`, `QWEN_REPO`, `QWEN_REVISION` or `QWEN_CONTEXT`, the file's values for all four are left out, so the two never mix. `PUNY_CONFIG` names a different file.
 
@@ -193,7 +199,7 @@ An environment variable of the same name wins over the file, for one run: `QWEN_
   - `kat`, the default: KAT-Coder-V2.5-Dev, pruned to 11.4 GiB.
   - `reap`: Qwen3.6-35B-A3B pruned the same way, the previous default.
   - `small`: Qwen3.5-4B, 2.8 GiB, for quick tests.
-  - For Macs whose GPU may use more than 16 GiB: `kat-full` (KAT-Coder unpruned, 20.4 GiB), `qwen38-4` and `qwen38` (Qwen3.8-27B at 4 and 8 bits, 15.0 and 27.5 GiB), `coder-next` (Qwen3-Coder-Next at 4 bits, 41.8 GiB), `coder-next-8` (at 8 bits, 78.8 GiB), and `glimmer-4` and `glimmer` (Meta's Muse Glimmer at 4 and 8 bits, 18.1 and 31.1 GiB). [docs/models.md](docs/models.md#presets-for-larger-macs) shows what each needs.
+  - For Macs whose GPU may use more than 16 GiB: `kat-full` (KAT-Coder unpruned, 20.4 GiB), `qwen38-4` and `qwen38` (Qwen3.8-27B at 4 and 8 bits, 15.0 and 27.5 GiB), `coder-next` (Qwen3-Coder-Next at 4 bits, 41.8 GiB), `coder-next-8` (at 8 bits, 78.8 GiB), and `glimmer-4` and `glimmer` (Meta's Muse Glimmer at 4 and 8 bits, 18.1 and 31.1 GiB to download, 14.6 and 27.6 GiB loaded). [docs/models.md](docs/models.md#presets-for-larger-macs) shows what each needs.
 - `QWEN_REPO` and `QWEN_REVISION`: any other model, as `./bin/models` names it, at a full 40-character commit hash. Set both instead of a preset. Its files are verified like a preset's.
 - `QWEN_CONTEXT`: the context window, in tokens. It defaults to what the model card states, 262144 tokens for all three presets, and is required with `QWEN_REPO`. When it does not fit in the memory the GPU may use, the server tells the agents the part that does and refuses longer requests. Set it when starting `./bin/serve-qwen`; the launchers read the server's value, so you need not repeat it. [docs/models.md](docs/models.md#memory-and-disk-guards) shows what each size needs.
 - `QWEN_MAX_OUTPUT`: the most tokens one reply may use, 8192 tokens by default.

@@ -1,0 +1,13 @@
+{{define "content"}}
+<div class="pagehead"><h1>Settings</h1>{{template "settings-tabs" "about"}}</div>
+<section class="card">
+  <dl class="facts">
+    <dt>Repo</dt><dd><code>{{.Data.Repo}}</code></dd>
+    <dt>Address</dt><dd><code>{{.Data.Origin}}</code>; answers only requests that name it, from its own pages</dd>
+    <dt>mlx-lm</dt><dd>{{.Data.MLXLM}}, from <code>lib/mlx-lm.lock</code></dd>
+    <dt>Built with</dt><dd>{{.Data.GoVersion}}, from <code>lib/webui.sh</code></dd>
+    <dt>HTMX</dt><dd>{{.Data.HTMXVersion}}, SHA-256 <code class="wrap">{{.Data.HTMXSHA256}}</code></dd>
+  </dl>
+  <p class="muted">Nothing here is vendored: <code>./bin/web-ui</code> downloads Go and HTMX at pinned versions and checks them against their published hashes. <code>./bin/licenses</code> lists the licenses.</p>
+</section>
+{{end}}

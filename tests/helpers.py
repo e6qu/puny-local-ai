@@ -1,8 +1,8 @@
 """Shared test helpers.
 
-Every test runs the scripts from a fresh copy of bin/, lib/ and bench/ in a
-temporary folder, with its own state/ and its own home folder, so nothing
-touches the real repo state, the real agent configs or ~/. Stub programs
+Every test runs the scripts from a fresh copy of bin/, lib/, bench/,
+workflows/, evals/ and ui/ in a temporary folder, with its own state/ and its
+own home folder, so nothing touches the real repo state, the real agent configs or ~/. Stub programs
 stand in for npm, node, opencode, pi and codex, and FakeServer stands in for
 mlx_lm.server or a Hugging Face endpoint.
 """
@@ -42,7 +42,7 @@ class Sandbox:
         # Resolved, because the scripts resolve symlinks such as /var -> /private/var.
         self.dir = Path(tempfile.mkdtemp(prefix="puny-test-")).resolve()
         self.root = self.dir / "repo"
-        for part in ("bin", "lib", "bench", "workflows", "evals"):
+        for part in ("bin", "lib", "bench", "workflows", "evals", "ui"):
             shutil.copytree(REPO / part, self.root / part, ignore=shutil.ignore_patterns("__pycache__"))
         (self.root / "state").mkdir()
         if link_mlx_env:

@@ -8,6 +8,10 @@
 #                                    empty VALUE removes the setting
 #   ./bin/config unset KEY...        remove settings, so their defaults apply
 #   ./bin/config check               check the settings in effect
+#   ./bin/config raw                 print the file as it is
+#   ./bin/config replace             replace the whole file with standard
+#                                    input, after the same checks as set; empty
+#                                    input removes the file
 #
 # set checks the file as it would be after the change, on its own, before it
 # saves anything: a value the scripts would refuse is never written.
@@ -47,24 +51,15 @@ show() {
   done
 }
 
-# Writes the changes to a copy of the file, checks the copy with every setting
-# cleared from the environment, then puts it in place.
-change() {
-  local copy status=0 unset_args=() key
-  copy="$(mktemp "$(dirname "$PUNY_CONFIG")/.puny.conf.XXXXXX")"
-  if [[ -f "$PUNY_CONFIG" ]]; then
-    cp -p "$PUNY_CONFIG" "$copy"
-  else
-    rm -f "$copy"
-  fi
-  python3 -I "$PUNY_ROOT/lib/config.py" write "$copy" "$@" || status=$?
-  if [[ $status -eq 0 ]]; then
-    for key in "${CONFIG_SETTINGS[@]}"; do
-      unset_args+=(-u "$key")
-    done
-    env "${unset_args[@]}" PUNY_CONFIG="$copy" "$PUNY_ROOT/bin/config" check >/dev/null || status=$?
-  fi
-  if [[ $status -ne 0 ]]; then
+# Checks a copy of the file, given as $1, with every setting cleared from the
+# environment, then puts it in place; a copy that is gone removes the file.
+# A copy that fails the checks is deleted and nothing is saved.
+put_in_place() {
+  local copy="$1" unset_args=() key
+  for key in "${CONFIG_SETTINGS[@]}"; do
+    unset_args+=(-u "$key")
+  done
+  if [[ -f "$copy" ]] && ! env "${unset_args[@]}" PUNY_CONFIG="$copy" "$PUNY_ROOT/bin/config" check >/dev/null; then
     rm -f "$copy"
     die "nothing was saved"
   fi
@@ -73,6 +68,42 @@ change() {
   else
     rm -f "$PUNY_CONFIG"
   fi
+}
+
+new_copy() {
+  mktemp "$(dirname "$PUNY_CONFIG")/.puny.conf.XXXXXX"
+}
+
+# Writes the changes to a copy of the file, then checks it and puts it in place.
+change() {
+  local copy
+  copy="$(new_copy)"
+  if [[ -f "$PUNY_CONFIG" ]]; then
+    cp -p "$PUNY_CONFIG" "$copy"
+  else
+    rm -f "$copy"
+  fi
+  python3 -I "$PUNY_ROOT/lib/config.py" write "$copy" "$@" || { rm -f "$copy"; die "nothing was saved"; }
+  put_in_place "$copy"
+}
+
+# Replaces the file with standard input, checked as set checks a change.
+replace() {
+  local copy
+  copy="$(new_copy)"
+  cat > "$copy"
+  if [[ -f "$PUNY_CONFIG" ]]; then
+    chmod "$(stat -f %Lp "$PUNY_CONFIG")" "$copy"
+  else
+    chmod 644 "$copy"
+  fi
+  if ! grep -q '[^[:space:]]' "$copy"; then
+    rm -f "$copy"
+  elif ! python3 -I "$PUNY_ROOT/lib/config.py" read "$copy" "the new puny.conf" >/dev/null; then
+    rm -f "$copy"
+    die "nothing was saved"
+  fi
+  put_in_place "$copy"
 }
 
 command="${1:-show}"
@@ -119,5 +150,18 @@ print(json.dumps({"file": sys.argv[2], "settings": rows}))
     check
     echo "OK: the settings in effect are valid."
     ;;
-  *) die "usage: $PUNY_ROOT/bin/config [show [--json] | set KEY=VALUE... | unset KEY... | check]" ;;
+  raw)
+    [[ $# -eq 0 ]] || die "usage: $PUNY_ROOT/bin/config raw"
+    [[ ! -f "$PUNY_CONFIG" ]] || cat "$PUNY_CONFIG"
+    ;;
+  replace)
+    [[ $# -eq 0 ]] || die "usage: $PUNY_ROOT/bin/config replace < FILE"
+    replace
+    if [[ -f "$PUNY_CONFIG" ]]; then
+      echo "Saved to $PUNY_CONFIG. Restart ./bin/serve-qwen for server settings, and run ./bin/integrate install again if the address, model or window changed."
+    else
+      echo "Removed $PUNY_CONFIG: every setting has its default."
+    fi
+    ;;
+  *) die "usage: $PUNY_ROOT/bin/config [show [--json] | set KEY=VALUE... | unset KEY... | check | raw | replace]" ;;
 esac

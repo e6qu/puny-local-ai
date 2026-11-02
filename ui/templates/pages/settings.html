@@ -1,0 +1,5 @@
+{{define "content"}}
+<div class="pagehead"><h1>Settings</h1>{{template "settings-tabs" "form"}}
+<p class="muted">Saved in <code>{{with .Data.Settings}}{{.File}}{{else}}puny.conf{{end}}</code>, the file every <code>./bin</code> command reads; <code>./bin/config</code> edits the same file. Leave a field empty for its default. A setting given in the environment of <code>./bin/web-ui</code> wins over the file and cannot be changed here. Server and model settings apply when the server restarts; the agents learn a new address, model or window from <a href="/agents">Agents</a>.</p></div>
+{{template "settings-form" .Data}}
+{{end}}

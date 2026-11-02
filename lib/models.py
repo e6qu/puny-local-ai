@@ -8,7 +8,9 @@ MODEL is a Hugging Face repository or modelscope:REPO (lib/sources.py).
 info resolves REVISION (default main) to a commit and reads the model's
 files and config at that commit, without downloading the weights. It
 reports:
-  - the download size and the weights mlx-lm loads;
+  - the download size and the weights mlx-lm loads, less any tensors its
+    code for the model drops, read from the safetensors headers with range
+    requests;
   - whether mlx-lm 0.32.2 has the architecture, and which tool-call parser
     it would pick from the chat template; agents need one;
   - the context window from config.json (check it against the model card);
@@ -25,6 +27,7 @@ import argparse
 import importlib.util
 import json
 import re
+import struct
 import sys
 import types
 from pathlib import Path
@@ -65,6 +68,27 @@ def fetch_text(name, commit, path):
         return response.read().decode()
 
 
+def dropped_bytes(name, commit, paths, model_type):
+    """The weights mlx-lm drops for model_type, read from each file's
+    safetensors header with range requests, without downloading the file."""
+    if model_type not in memory.DROPPED_TENSOR_PREFIXES:
+        return 0
+    total = 0
+    for path in sorted(paths):
+        if not WEIGHTS.match(path):
+            continue
+        url = sources.file_url(name, commit, path)
+        header_bytes = struct.unpack("<Q", sources.get_range(url, 0, 8))[0]
+        if header_bytes > 100 * memory.MIB:
+            raise sources.SourceError(f"{url} claims a {header_bytes}-byte header; it is not a safetensors file")
+        try:
+            header = json.loads(sources.get_range(url, 8, header_bytes))
+        except ValueError as e:
+            raise sources.SourceError(f"the header of {url} is not JSON: {e}") from e
+        total += memory.dropped_tensor_bytes(header, model_type)
+    return total
+
+
 def architecture_supported(model_type):
     from mlx_lm.utils import MODEL_REMAPPING
     return importlib.util.find_spec(f"mlx_lm.models.{MODEL_REMAPPING.get(model_type, model_type)}") is not None
@@ -95,10 +119,10 @@ def info(text):
     paths = {f["path"] for f in files}
     if "config.json" not in paths:
         raise sources.SourceError(f"{name} at {commit} has no config.json, so it is not a model mlx-lm can load")
-    weights = sum(f["size"] for f in files if WEIGHTS.match(f["path"]))
     full_config = fetch_json(name, commit, "config.json")
     config = full_config.get("text_config", full_config)
     model_type = full_config.get("model_type", "")
+    weights = sum(f["size"] for f in files if WEIGHTS.match(f["path"])) - dropped_bytes(name, commit, paths, model_type)
     context = config.get("max_position_embeddings")
     result = {
         "name": name, "commit": commit, "url": sources.page_url(name),

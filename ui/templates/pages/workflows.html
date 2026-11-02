@@ -1,0 +1,41 @@
+{{define "content"}}
+<div class="pagehead"><h1>Team-solve</h1><p class="muted">Solves a programming problem with a team of fresh agent runs: a planner, two ideators, a solver, a sample test, a reviewer, one repair, and a final test that alone decides success. The method is GVS5H's, as written up in Memdoor's team-solve workflow; the prompts are in <code>workflows/team-solve/</code>. Each run is <code>./bin/team-solve</code>, and needs the server running.</p></div>
+{{if .Data.Error}}<div class="notice bad">{{.Data.Error}}</div>{{end}}
+<div class="grid2">
+<form class="card" hx-post="/workflows/team-solve" hx-target="#new-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>New problem</h2><a href="/workflows?example=1">Fill in the example</a></div>
+  <label class="field">Name <input name="name" value="{{.Data.Example.Name}}" placeholder="for example two-sum" required pattern="[A-Za-z0-9._-]+"></label>
+  <label class="field">Task <span class="muted">task.md: the problem, and how solution.py reads input and prints its answer</span>
+    <textarea name="task" rows="8" required>{{.Data.Example.Task}}</textarea></label>
+  {{range $i, $in := .Data.Example.Inputs}}<div class="sample">
+    <label class="field">Sample {{inc $i}} input<textarea name="in{{inc $i}}" rows="3">{{$in}}</textarea></label>
+    <label class="field">Expected output<textarea name="out{{inc $i}}" rows="3">{{index $.Data.Example.Outputs $i}}</textarea></label>
+  </div>{{end}}
+  {{template "team-solve-options" .Data}}
+  <div class="row"><span class="grow"></span><button class="primary">Create and solve</button></div>
+  <div id="new-notice"></div>
+</form>
+<div>
+  <form class="card" hx-post="/workflows/team-solve" hx-target="#again-notice" hx-disabled-elt="find button">
+    <div class="cardhead"><h2>Run again</h2><span class="muted">problems in state/team-solve/</span></div>
+    {{if .Data.Problems}}<label class="field">Problem <select name="existing">{{range .Data.Problems}}<option>{{.}}</option>{{end}}</select></label>
+    {{template "team-solve-options" .Data}}
+    <div class="row"><span class="grow"></span><button class="primary">Solve</button></div>{{else}}<p class="muted">No problems yet.</p>{{end}}
+    <div id="again-notice"></div>
+  </form>
+  <section class="card">
+    <div class="cardhead"><h2>Runs</h2></div>
+    {{template "job-table" .Data.Runs}}
+  </section>
+</div>
+</div>
+{{end}}
+{{define "team-solve-options"}}<div class="options">
+  <label class="field">Agent <select name="agent">
+    {{$agent := ""}}{{with .Settings}}{{$agent = .Get "TEAM_SOLVE_AGENT"}}{{end}}
+    <option value="pi"{{if eq $agent "pi"}} selected{{end}}>Pi</option>
+    <option value="opencode"{{if eq $agent "opencode"}} selected{{end}}>OpenCode</option>
+    <option value="codex"{{if eq $agent "codex"}} selected{{end}}>Codex</option>
+  </select></label>
+  <label class="field">Seconds per step <input name="timeout" inputmode="numeric" placeholder="{{with .Settings}}{{.Get "TEAM_SOLVE_TIMEOUT"}}{{end}}"></label>
+</div>{{end}}

@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="pagehead"><h1>Benchmarks</h1><p class="muted">Two ways to compare models. The agent benchmark runs whole coding agents on the tasks in <code>bench/</code> and grades them with hidden tests. The evals ask the model directly: tool calls, coding problems, long context and speed. Both need the server running, and label their results with the model's name.</p></div>
+<div class="grid2">
+<form class="card" hx-post="/benchmarks/agents" hx-target="#bench-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>Agent benchmark</h2><code>./bin/bench-agents</code></div>
+  <label class="field">Label <input name="label" placeholder="the model, such as kat" required pattern="[A-Za-z0-9._-]+"></label>
+  <fieldset><legend>Agents</legend>{{range .Data.Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.}}"{{if ne . "codex"}} checked{{end}}> {{.}}</label>{{end}}</fieldset>
+  <fieldset><legend>Tasks</legend>{{range .Data.Tasks}}<label class="check"><input type="checkbox" name="task" value="{{.}}" checked> {{.}}</label>{{end}}</fieldset>
+  <div class="options">
+    <label class="field">Runs of each <input name="runs" inputmode="numeric" placeholder="1"></label>
+    <label class="field">Seconds per run <input name="timeout" inputmode="numeric" placeholder="900"></label>
+  </div>
+  <div class="row"><span class="grow"></span><button class="primary">Run</button></div>
+  <div id="bench-notice"></div>
+</form>
+<form class="card" hx-post="/benchmarks/evals" hx-target="#evals-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>Model evals</h2><code>./bin/evals</code></div>
+  <label class="field">Label <input name="label" placeholder="the model, such as kat" required pattern="[A-Za-z0-9._-]+"></label>
+  <fieldset><legend>Suites</legend>{{range .Data.Suites}}<label class="check"><input type="checkbox" name="suite" value="{{.}}" checked> {{.}}</label>{{end}}</fieldset>
+  <div class="options">
+    <label class="field">Samples <input name="samples" inputmode="numeric" placeholder="1"></label>
+    <label class="field">Reply tokens <input name="max_output" inputmode="numeric" placeholder="QWEN_MAX_OUTPUT"></label>
+    <label class="field">Longest prompt, tokens <input name="long_context" inputmode="numeric" placeholder="the window"></label>
+    <label class="field">Thinking <select name="thinking"><option value="">on (default)</option><option value="off">off</option></select></label>
+  </div>
+  <div class="row"><span class="grow"></span><button class="primary">Run</button></div>
+  <div id="evals-notice"></div>
+</form>
+</div>
+<section class="card"><div class="cardhead"><h2>Runs</h2></div>{{template "job-table" .Data.Runs}}</section>
+<section class="card"><div class="cardhead"><h2>Agent benchmark results</h2><code>./bin/bench-agents report</code></div><pre class="console">{{.Data.BenchReport}}</pre></section>
+<section class="card"><div class="cardhead"><h2>Eval results</h2><code>./bin/evals report</code></div><pre class="console">{{.Data.EvalsReport}}</pre></section>
+{{end}}

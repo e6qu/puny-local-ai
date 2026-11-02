@@ -1,0 +1,19 @@
+{{define "content"}}
+<div class="pagehead"><h1>Server</h1><p class="muted">The local model server that OpenCode, Pi and Codex talk to, run by <code>./bin/serve-qwen</code> with its memory guards.</p></div>
+{{if .Data.Error}}<div class="notice bad">{{.Data.Error}}</div>{{else}}{{template "server-card" .Data.Card}}{{end}}
+<div class="grid2">
+  <section class="card">
+    <div class="cardhead"><h2>Recent jobs</h2><a href="/jobs">All jobs</a></div>
+    {{template "job-table" .Data.Jobs}}
+  </section>
+  <section class="card">
+    <div class="cardhead"><h2>Next steps</h2></div>
+    <ul class="steps">
+      <li><a href="/models">Models</a>: {{with .Data.Models}}{{.}} downloaded; {{end}}pick a preset or download one.</li>
+      <li><a href="/agents">Agents</a>: point OpenCode, Pi and Codex at this server.</li>
+      <li><a href="/chat">Chat</a> with the model, or run a <a href="/workflows">team-solve</a> or a <a href="/benchmarks">benchmark</a>.</li>
+      <li><a href="/settings">Settings</a> edits <code>puny.conf</code>, the same file <code>./bin/config</code> edits.</li>
+    </ul>
+  </section>
+</div>
+{{end}}

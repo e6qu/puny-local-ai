@@ -1,0 +1,31 @@
+{{define "content"}}
+<div class="pagehead"><h1>Agents</h1><p class="muted">OpenCode, Pi and Codex can use the local model through their own configs, with a provider called <code>puny</code>, or through the launchers <code>./bin/opencode-qwen</code>, <code>./bin/pi-qwen</code> and <code>./bin/codex-qwen</code>. Nothing else in their configs changes, and removing restores each file exactly.</p></div>
+<section class="card">
+  <div class="cardhead"><h2>Configs</h2><code>./bin/integrate status</code></div>
+  {{if .Data.Error}}<div class="notice bad">{{.Data.Error}}</div>{{end}}
+  <pre class="console">{{.Data.Status}}</pre>
+  <div class="row" hx-target="#integrate-notice" hx-disabled-elt="find button">
+    <button class="primary" hx-post="/agents/integrate/install">Add or update the local model</button>
+    <button class="danger" hx-post="/agents/integrate/uninstall" hx-confirm="Remove the puny provider from the agents' configs?">Remove it</button>
+  </div>
+  <p class="muted">Run <b>Add or update</b> again after changing the address, model or window: the configs record them.</p>
+  <div id="integrate-notice"></div>
+</section>
+<div class="grid2">
+<section class="card">
+  <div class="cardhead"><h2>Install agents</h2><code>./bin/setup</code></div>
+  <p class="muted">At pinned versions, refusing any release less than 24 hours old. Codex installs with <code>brew install codex</code>.</p>
+  <div class="row" hx-target="#setup-notice" hx-disabled-elt="find button">
+    <button class="secondary" hx-post="/jobs/setup" hx-vals='{"item": "opencode"}'>Install OpenCode</button>
+    <button class="secondary" hx-post="/jobs/setup" hx-vals='{"item": "pi"}'>Install Pi</button>
+  </div>
+  <div id="setup-notice"></div>
+</section>
+<section class="card">
+  <div class="cardhead"><h2>Smoke test</h2><code>./bin/smoke-test</code></div>
+  <p class="muted">Each installed agent must create a file through its own tools, against the running server.</p>
+  <div class="row"><button class="primary" hx-post="/agents/smoke-test" hx-target="#smoke-notice">Run the smoke test</button></div>
+  <div id="smoke-notice"></div>
+</section>
+</div>
+{{end}}

@@ -1,0 +1,15 @@
+{{define "content"}}
+<div class="pagehead"><h1>Chat</h1><p class="muted">Talks to the server that <code>./bin/serve-qwen</code> runs. Nothing leaves this Mac.</p></div>
+<div class="chat">
+  <div id="log" class="chatlog" aria-live="polite"></div>
+  <form id="ask" class="card">
+    <textarea id="prompt" placeholder="Ask the local model. Enter sends, Shift+Enter adds a line." required rows="3"></textarea>
+    <div class="row">
+      <label class="muted"><input type="checkbox" id="think" checked> Thinking</label>
+      <span class="grow"></span>
+      <button type="button" class="secondary" id="clear">New chat</button>
+      <button type="submit" class="primary" id="send">Send</button>
+    </div>
+  </form>
+</div>
+{{end}}

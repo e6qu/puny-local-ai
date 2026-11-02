@@ -10,11 +10,21 @@ What works with each agent, mlx-lm bugs that agents can hit, and where this setu
 | `./bin/integrate install` | yes | yes | yes, as the profile `codex -p puny` |
 | Launcher | `./bin/opencode-qwen` | `./bin/pi-qwen` | `./bin/codex-qwen` |
 | `./bin/smoke-test` creates a file through its tools | yes | yes | yes, with the small model on 2026-10-28 |
-| `./bin/bench-agents` | yes, benchmarked | yes, benchmarked | runs with `BENCH_AGENTS=codex`; not yet benchmarked |
+| `./bin/bench-agents` | yes, benchmarked | yes, benchmarked | yes, benchmarked with the small model only; see below |
+
+On 2026-11-02 the three agents ran the `billing`, `inventory` and `todo` tasks once each with the `small` preset (Qwen3.5-4B), Codex 0.166.0, and the default 900-second limit per run. `kat` could not start then: only 8.4 GiB of memory was free, and it needs about 17. The results are in `state/bench/small/`:
+
+| Task | OpenCode | Pi | Codex |
+|---|---|---|---|
+| billing | passed in 548 s | passed in 388 s | out of time |
+| inventory | passed in 174 s | passed in 119 s | passed in 868 s |
+| todo | out of time | out of time | out of time |
+
+Codex was the slowest of the three with this model: in the billing run each of its turns took about 105 seconds, by the server's log, so nine turns used up the 900 seconds. In both the billing and inventory runs the model also called `apply_patch`, which Codex had not offered it (see below); Codex answered "unsupported call" and the model went on with shell commands, at the cost of a turn. One run each is too few to rank the agents; with `kat`, at the two temperatures tried, OpenCode and Pi passed 23 of 24 runs (see [models.md](models.md#comparing-models)).
 
 Codex needs no extra setup. mlx-lm has no Responses API ([ml-explore/mlx-lm#1263](https://github.com/ml-explore/mlx-lm/pull/1263) and [#1207](https://github.com/ml-explore/mlx-lm/pull/1207), which would add one, were open on 2026-10-28, and release 0.32.2 has none), so `./bin/serve-qwen` adds it: [how-it-works.md](how-it-works.md#how-codex-is-served) describes the translation. Codex behaves differently from its OpenAI setup in a few ways:
 
-- **No apply_patch tool.** Codex offers its freeform `apply_patch` tool only to models it knows, through their entry in its model catalog. For any other model name, such as `default_model`, the tool is left out ([`spec_plan.rs` at 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/spec_plan.rs#L1432), [`model_info.rs`](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/models-manager/src/model_info.rs#L98-L124)). The model edits files through shell commands instead. The translation handles freeform tools too, so a `model_catalog_json` that enables `apply_patch` would work, but it is not set up here.
+- **No apply_patch tool.** Codex offers its freeform `apply_patch` tool only to models it knows, through their entry in its model catalog. For any other model name, such as `default_model`, the tool is left out ([`spec_plan.rs` at 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/spec_plan.rs#L1432), [`model_info.rs`](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/models-manager/src/model_info.rs#L98-L124)). The model edits files through shell commands instead, although a model trained on Codex may still call `apply_patch`; Codex then answers "unsupported call" and the model falls back to the shell. The translation handles freeform tools too, so a `model_catalog_json` that enables `apply_patch` would work, but it is not set up here.
 - **No web search.** Web search runs on OpenAI's servers, so the server leaves that tool out of the request and logs that it did.
 - **Text only.** Images attached to a Codex prompt are refused with an error, because the served models read text only.
 - **A warning at the start.** Codex prints "Model metadata for `default_model` not found. Defaulting to fallback metadata". The server has no Codex model catalog to offer, so Codex uses its defaults for an unknown model, with the context window from the profile. The runs above worked with this warning.

@@ -27,7 +27,8 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/sources.py`: Hugging Face and ModelScope: search, commits, file lists with hashes, and ModelScope downloads.
 - `lib/verify_model.py`: the model hash check, for either source.
 - `lib/models.py`: `./bin/models search`, `info` and `list`, including the memory estimate for a model that is not downloaded.
-- `lib/webui.py` and `lib/webui.html`: the page `./bin/web-ui` serves and its API.
+- `ui/`: the web UI, a Go program that uses only the standard library. `main.go` describes it; `handlers.go` holds the pages and actions, `server.go` the model server control, `jobs.go` the jobs, `templates/` the HTML (one file per page in `pages/`, the shared parts in `partials.html`), and `static/` the stylesheet and the one script. Pages may not use inline scripts or styles: the Content-Security-Policy forbids them. Every action goes through a `bin/` command, never around it.
+- `lib/webui.sh`: the pinned Go and HTMX, and how `ui/` is built into `state/web-ui/`.
 - `lib/integrate.py` and `lib/jsonc.py`: add the provider to the agents' own configs and remove it again, editing JSON and JSONC in place without touching anything else. `lib/integrate.py` also generates the config the launchers pass, so both always agree.
 - `tests/`: the test suite; see [Tests](#tests).
 - `bench/`: the benchmark tasks. Each has `start/` (the project the agent gets), `hidden/` (tests it never sees), `prompt.txt` and an optional `check` script.
@@ -56,6 +57,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 
 - **mlx-lm or its dependencies:** regenerate `lib/mlx-lm.lock` with the command in its header and put the header back. The next `./bin/setup mlx` reinstalls `state/mlx-env`.
 - **OpenCode or Pi:** change the version in `lib/agents.sh`, then run `./bin/setup opencode pi`.
+- **Go or HTMX:** change the version and hashes in `lib/webui.sh`, taking Go's SHA-256 from https://go.dev/dl/?mode=json and HTMX's from the `integrity` field of https://registry.npmjs.org/htmx.org/VERSION, and the file's SHA-256 from the package, compared against a CDN copy. Raise `go` in `ui/go.mod` with Go's minor version. Then run `./bin/setup web-ui` and `./tests/run`.
 - **A model preset:** change it in `lib/mlx.sh`, including `preset_upstream`, the model it was converted from. Run `./bin/setup` for that preset; it fails unless every file matches Hugging Face's hashes for the commit.
 
 After any pin change, run `./bin/licenses` and replace the tables in THIRD_PARTY.md with its output. Update any docs that name the old version.
@@ -63,12 +65,12 @@ After any pin change, run `./bin/licenses` and replace the tables in THIRD_PARTY
 ## Tests
 
 ```sh
-./tests/run              # fast tests, under two minutes: no network, no model, no real agents
+./tests/run              # fast tests, about four minutes: no network, no model, no real agents
 ./tests/run --live       # adds the live tests, about six minutes
 ./tests/run integrate    # only tests whose name contains "integrate"
 ```
 
-Every test runs the scripts from a temporary copy of the repo, with its own `state/` and its own home folder, so tests never touch your agent configs, downloads or `~/`. They run in the mlx-lm environment, which `./tests/run` installs if needed.
+Every test runs the scripts from a temporary copy of the repo, with its own `state/` and its own home folder, so tests never touch your agent configs, downloads or `~/`. They run in the mlx-lm environment, which `./tests/run` installs if needed. `./tests/run` also builds the web UI, runs `go vet`, a `gofmt` check and the Go tests in `ui/`, then hands the built program to `tests/test_webui.py`, which drives it over HTTP with the real `bin/` commands. To run only the Go tests while working on `ui/`, use the pinned Go the same way `lib/webui.sh` does: `source lib/common.sh; source lib/webui.sh; go_in_ui test ./...` in bash.
 
 - **Fast tests** cover every script and library. Stub programs stand in for `npm`, `node`, `df`, `uv`, `opencode`, `pi` and `codex`; a fake mlx-lm environment and fake model folders stand in for the real ones; local fakes stand in for `mlx_lm.server`, Hugging Face and ModelScope, which are otherwise blocked; and the memory readings are replaced where a test needs a full or empty machine. They never download anything or touch the real `state/`. The benchmark tests apply reference solutions from `tests/fixtures/solutions/` to show that each task can be solved and that its hidden tests catch the unsolved start.
 - **Live tests** need `./bin/setup mlx small opencode pi`, Codex (`brew install codex`), network access and about 7 GiB of free memory. They start the guarded server with the small model and run the checks and all three real agents against it; run `./bin/integrate` against the real OpenCode, Pi and Codex; start a private OpenCode background service on its own port to check the restart notice; and check that every pinned model commit still exists and that `./bin/licenses` still matches THIRD_PARTY.md.
