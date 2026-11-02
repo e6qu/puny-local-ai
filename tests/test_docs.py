@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO / "lib"))
 import integrate  # noqa: E402
 
 DOCS = ["README.md", "CONTRIBUTING.md", "THIRD_PARTY.md", "docs/models.md", "docs/compatibility.md",
-        "docs/agents.md", "docs/how-it-works.md", "docs/alternatives.md"]
+        "docs/agents.md", "docs/how-it-works.md", "docs/alternatives.md", "docs/workflows.md"]
 README = (REPO / "README.md").read_text()
 AGENTS_DOC = (REPO / "docs" / "agents.md").read_text()
 
@@ -64,7 +64,7 @@ class ReadmeTest(unittest.TestCase):
     def test_commands_in_the_docs_start_with_dot_slash(self):
         for name in DOCS:
             text = (REPO / name).read_text()
-            for match in re.finditer(r"(?<![./\w~-])(?:bin|tests)/(setup|run|integrate|serve-qwen|smoke-test|[a-z]+-qwen|install-agents|licenses|bench-agents|check-[a-z-]+|models|web-ui)\b", text):
+            for match in re.finditer(r"(?<![./\w~-])(?:bin|tests)/(setup|run|integrate|serve-qwen|smoke-test|[a-z]+-qwen|install-agents|licenses|bench-agents|check-[a-z-]+|models|web-ui|workflow|team-solve|verify|evals|config)\b", text):
                 with self.subTest(file=name, command=match.group()):
                     self.fail(f"{name} shows {match.group()} without ./")
 

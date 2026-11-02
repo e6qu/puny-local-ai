@@ -30,7 +30,7 @@ source "$PUNY_ROOT/lib/agents.sh"
 check() {
   resolve_model_settings
   web_ui_url >/dev/null
-  resolve_team_solve_settings
+  resolve_workflow_settings
 }
 
 # Prints KEY, source (environment, puny.conf or default) and value, tab-separated.

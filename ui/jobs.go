@@ -17,7 +17,7 @@ import (
 )
 
 // A job is one run of a long repo command: a download, a setup item, a
-// team-solve run, a benchmark or the smoke test. Each job has a folder in
+// workflow run, a benchmark or the smoke test. Each job has a folder in
 // state/jobs/ID with:
 //
 //	job.json  what was run, by whom and when
@@ -34,6 +34,7 @@ var jobGroups = map[string][]string{
 	"download":   {"download"},
 	"setup":      {"download"},
 	"team-solve": {"model"},
+	"goal":       {"model"},
 	"bench":      {"model"},
 	"evals":      {"model"},
 	"smoke":      {"model"},
@@ -59,7 +60,7 @@ type Job struct {
 	Command string            `json:"command"` // bin/NAME
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env,omitempty"`
-	Folder  string            `json:"folder,omitempty"` // a team-solve problem
+	Folder  string            `json:"folder,omitempty"` // the folder a workflow works in
 	Started time.Time         `json:"started"`
 	PID     int               `json:"pid"`
 

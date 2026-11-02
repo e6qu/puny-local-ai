@@ -12,8 +12,8 @@
   {{template "job-output" .Data}}
 </section>
 {{if .Data.Job.Folder}}<section class="card">
-  <div class="cardhead"><h2>Problem folder</h2><code>{{.Data.Job.Folder}}</code></div>
-  {{range .Data.Files}}<details class="file"{{if eq .Name "solution.py"}} open{{end}}><summary><code>{{.Name}}</code></summary><pre class="console">{{.Text}}</pre></details>{{else}}<p class="muted">Nothing written yet.</p>{{end}}
+  <div class="cardhead"><h2>Folder</h2><code>{{.Data.Job.Folder}}</code></div>
+  {{range .Data.Files}}<details class="file"{{if eq .Name "check-output.log"}} open{{end}}><summary><code>{{.Name}}</code></summary><pre class="console">{{.Text}}</pre></details>{{else}}<p class="muted">Nothing written yet.</p>{{end}}
 </section>{{end}}
 {{if or (eq .Data.Job.Kind "bench") (eq .Data.Job.Kind "evals")}}<p><a href="/benchmarks">See every result on the Benchmarks page.</a></p>{{end}}
 {{end}}

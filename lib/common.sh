@@ -20,7 +20,7 @@ die() {
 # their help, and the tests check that the two agree.
 CONFIG_SETTINGS=(MLX_BASE_URL QWEN_PRESET QWEN_REPO QWEN_REVISION QWEN_CONTEXT QWEN_MAX_OUTPUT QWEN_TEMP
   QWEN_KV_BITS QWEN_PROMPT_CACHE_ENTRIES QWEN_PREFILL_STEP QWEN_MEMORY_MARGIN WEB_UI_URL SMOKE_TIMEOUT
-  BENCH_AGENTS BENCH_TASKS BENCH_RUNS BENCH_TIMEOUT TEAM_SOLVE_AGENT TEAM_SOLVE_TIMEOUT
+  BENCH_AGENTS BENCH_TASKS BENCH_RUNS BENCH_TIMEOUT WORKFLOW_AGENT WORKFLOW_TIMEOUT
   EVAL_CASES EVAL_SAMPLES EVAL_TIMEOUT EVAL_MAX_OUTPUT EVAL_LONG_CONTEXT EVAL_THINKING)
 # Which model to serve is one choice: when the environment names a model,
 # the file's model settings are all left out, so the two never mix.
@@ -53,6 +53,8 @@ load_config() {
       || die "$PUNY_CONFIG line $number is not KEY=VALUE: $line"
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
+    [[ "$key" != TEAM_SOLVE_* ]] \
+      || die "$PUNY_CONFIG line $number: $key is now ${key/TEAM_SOLVE_/WORKFLOW_}; rename it"
     [[ " ${CONFIG_SETTINGS[*]} " == *" $key "* ]] \
       || die "$PUNY_CONFIG line $number: $key is not a puny-local-ai setting; expected one of ${CONFIG_SETTINGS[*]}"
     # Trims spaces, then removes one pair of matching quotes.

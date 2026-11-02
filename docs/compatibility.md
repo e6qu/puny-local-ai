@@ -1,10 +1,10 @@
 # Compatibility notes
 
-What works with each agent, mlx-lm bugs that agents can hit, and where this setup differs from the ChatGPT guide it started from.
+What works with each agent, and mlx-lm bugs that agents can hit.
 
 ## What works with each agent
 
-| | OpenCode 2.1.1 | Pi 1.3.0 | Codex 0.165.0 |
+| | OpenCode 2.1.1 | Pi 1.3.0 | Codex 0.166.0 |
 |---|---|---|---|
 | API it uses | Chat Completions | Chat Completions | Responses |
 | `./bin/integrate install` | yes | yes | yes, as the profile `codex -p puny` |
@@ -12,23 +12,23 @@ What works with each agent, mlx-lm bugs that agents can hit, and where this setu
 | `./bin/smoke-test` creates a file through its tools | yes | yes | yes, with the small model on 2026-10-28 |
 | `./bin/bench-agents` | yes, benchmarked | yes, benchmarked | yes, benchmarked with the small model only; see below |
 
-On 2026-11-02 the three agents ran the `billing`, `inventory` and `todo` tasks once each with the `small` preset (Qwen3.5-4B), Codex 0.166.0, and the default 900-second limit per run. `kat` could not start then: only 8.4 GiB of memory was free, and it needs about 17. The results are in `state/bench/small/`:
+On 2026-11-02 the three agents ran the `billing`, `inventory` and `todo` tasks once each with the `small` preset (Qwen3.5-4B) and the default 900-second limit; `kat` could not start for lack of free memory:
 
 | Task | OpenCode | Pi | Codex |
 |---|---|---|---|
-| billing | passed in 548 s | passed in 388 s | out of time |
-| inventory | passed in 174 s | passed in 119 s | passed in 868 s |
-| todo | out of time | out of time | out of time |
+| billing | passed in 548 s | passed in 388 s | passed in 617 s |
+| inventory | passed in 174 s | passed in 119 s | passed in 215 s |
+| todo | out of time | out of time | exited with an error after 239 s |
 
-Codex was the slowest of the three with this model: in the billing run each of its turns took about 105 seconds, by the server's log, so nine turns used up the 900 seconds. In both the billing and inventory runs the model also called `apply_patch`, which Codex had not offered it (see below); Codex answered "unsupported call" and the model went on with shell commands, at the cost of a turn. Both causes were then fixed: the server turns such an `apply_patch` call into one Codex applies, and the launcher turns off the ChatGPT app tools that made Codex's prompt five times longer (both below). Run again the same way, under the label `small-noapps`, Codex passed billing in 617 s and inventory in 215 s, and failed todo's tests after 239 s: 2 of 3 in 1,071 s in all, against 1 of 3 in 2,669 s before. `kat` with Codex is still to be run: `./bin/verify kat` does it on a Mac with about 17 GiB free and Codex installed ([models.md](models.md#checking-a-preset-on-another-mac)). One run each is too few to rank the agents; with `kat`, at the two temperatures tried, OpenCode and Pi passed 23 of 24 runs (see [models.md](models.md#comparing-models)).
+The Codex column is from after two fixes described below, the `apply_patch` call and the ChatGPT apps; before them, Codex passed 1 of 3 in 2,669 s. One run each is too few to rank the agents. `kat` with Codex is still to be run: `./bin/verify kat` does it on a Mac with about 17 GiB free ([models.md](models.md#checking-a-preset-on-another-mac)). With `kat`, OpenCode and Pi passed 23 of 24 runs ([models.md](models.md#reap-against-kat-coder)).
 
-Codex needs no extra setup. mlx-lm has no Responses API ([ml-explore/mlx-lm#1263](https://github.com/ml-explore/mlx-lm/pull/1263) and [#1207](https://github.com/ml-explore/mlx-lm/pull/1207), which would add one, were open on 2026-10-28, and release 0.32.2 has none), so `./bin/serve-qwen` adds it: [how-it-works.md](how-it-works.md#how-codex-is-served) describes the translation. Codex behaves differently from its OpenAI setup in a few ways:
+Codex speaks only the Responses API, which mlx-lm 0.32.2 lacks ([#1263](https://github.com/ml-explore/mlx-lm/pull/1263) and [#1207](https://github.com/ml-explore/mlx-lm/pull/1207) would add it; both were open on 2026-10-28), so the server adds it ([how](how-it-works.md#how-codex-is-served)). Codex behaves differently from its OpenAI setup:
 
-- **No apply_patch tool.** Codex offers its freeform `apply_patch` tool only to models it knows, through their entry in its model catalog. For any other model name, such as `default_model`, the tool is left out ([`spec_plan.rs` at 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/spec_plan.rs#L1432), [`model_info.rs`](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/models-manager/src/model_info.rs#L98-L124)). The model edits files through shell commands instead. A model trained on Codex calls `apply_patch` anyway, and Codex would answer "unsupported call", so the server sends such a call back as the `apply_patch` shell command, which Codex applies itself ([how-it-works.md](how-it-works.md#how-codex-is-served)). This was checked on 2026-11-02 by running Codex 0.166.0 against a stand-in server that answers with an `apply_patch` call: Codex applied the patch. Enabling the tool itself would need a `model_catalog_json` entry, which must carry Codex's whole system prompt, so it is not set up here.
+- **No apply_patch tool.** Codex offers its freeform `apply_patch` tool only to models it knows, through their entry in its model catalog. For any other model name, such as `default_model`, the tool is left out ([`spec_plan.rs` at 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/tools/spec_plan.rs#L1432), [`model_info.rs`](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/models-manager/src/model_info.rs#L98-L124)). The model edits files through shell commands instead. A model trained on Codex calls `apply_patch` anyway, and Codex would answer "unsupported call", so the server sends such a call back as the `apply_patch` shell command, which Codex applies itself ([how-it-works.md](how-it-works.md#how-codex-is-served)). Checked on 2026-11-02 with Codex 0.166.0 against a stand-in server: Codex applied the patch. Offering the tool itself would need a `model_catalog_json` entry carrying Codex's whole system prompt.
 - **No ChatGPT apps.** With a ChatGPT login, Codex offers about a hundred tools of ChatGPT's app connectors, which run on OpenAI's servers. They made the first request of a run 202 KB instead of 42 KB. The launcher and the profile turn them off with `features.apps = false` ([agents.md](agents.md#codex)).
 - **No web search.** Web search runs on OpenAI's servers, so the server leaves that tool out of the request and logs that it did.
 - **Text only.** Images attached to a Codex prompt are refused with an error, because the served models read text only.
-- **A warning at the start.** Codex prints "Model metadata for `default_model` not found. Defaulting to fallback metadata". The server has no Codex model catalog to offer, so Codex uses its defaults for an unknown model, with the context window from the profile. The runs above worked with this warning.
+- **A warning at the start**, "Model metadata for `default_model` not found", because there is no Codex model catalog. Codex then uses its defaults with the profile's context window; it is harmless.
 - **Codex is not pinned.** It comes from Homebrew. A new Codex release may send a request item the translation does not know; the server then refuses the request with an error that names the item, rather than guess.
 
 Claude Code is not covered. It speaks Anthropic's Messages API, which `mlx_lm.server` does not serve, and this project leaves it out by choice. Several of the servers in [alternatives.md](alternatives.md) serve that API.
@@ -38,14 +38,3 @@ Claude Code is not covered. It speaks Anthropic's Messages API, which `mlx_lm.se
 - [ml-explore/mlx-lm#1992](https://github.com/ml-explore/mlx-lm/issues/1992): the `qwen3_coder` parser cuts a value at its first `</parameter>`, so a file write whose content contains that text arrives truncated.
 - [ml-explore/mlx-lm#1946](https://github.com/ml-explore/mlx-lm/issues/1946): when a tool call fails to parse, the reply says `finish_reason: "tool_calls"` but carries none.
 - `GET /v1/models` in mlx-lm 0.32.2 lists models from the Hugging Face cache, which this setup keeps in `state/cache/huggingface`. When that folder does not exist, the request fails after the headers were sent, and the client gets an empty reply. `./bin/serve-qwen` answers this route itself with `default_model`, the only model it serves, and an empty catalog in the format Codex reads from the same path.
-
-## Differences from the original guide
-
-The guide this setup started from was out of date in several places:
-
-- **OpenCode v2 renamed its config keys.** `provider`, `npm`, `options` and `model` became `providers`, `package`, `settings` and `modelID` ([migration notes](https://opencode.ai/v2/docs/migrate-v1/)). OpenCode 1 does not read the new keys, so `./bin/integrate` and `./bin/opencode-qwen` stop unless OpenCode 2.0 or later is installed. Config injected through `OPENCODE_CONFIG_CONTENT` only applies with `--standalone`, because the shared background service does not see the launcher's environment. That service reads the config files when first used and keeps them until `opencode service restart`.
-- **Pi moved to a new npm scope.** `@mariozechner/pi-coding-agent` is deprecated in favor of `@earendil-works/pi-coding-agent`. Pi reads `models.json` only from its agent directory, so `./bin/pi-qwen` gives Pi its own directory, `state/pi-agent`, through `PI_CODING_AGENT_DIR`. Sessions from these runs live there too.
-- **Codex speaks only the Responses API.** `wire_api = "chat"` has been a hard error since Codex 0.95.0 ([openai/codex#10157](https://github.com/openai/codex/pull/10157)). The guide's Chat Completions setup no longer starts, so the server here answers the Responses API itself.
-- **The model name matters to the server.** A client-side alias such as `qwen-local` makes `mlx_lm.server` try to load a model by that name, so the agents send `default_model` ([details](agents.md#the-model-name-is-always-default_model)).
-- **Qwen thinking text arrives in a `reasoning` field.** The OpenCode and Pi configs tell each agent to read it there ([`server.py` line 1511](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/server.py#L1511)). Pi switches thinking on and off through `chat_template_kwargs`.
-- **The guide's model does not fit.** The unpruned Qwen3.6-35B-A3B at 4-bit needs more than the 16 GiB the GPU may use; [models.md](models.md#memory-budget) explains the default instead.

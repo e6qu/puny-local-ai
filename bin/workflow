@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Runs a workflow on a folder: a state machine of fresh agent runs and
+# commands, each doing one narrow job and handing on through files, looping
+# until a check passes or a bound runs out. lib/workflow.py describes the
+# graph format; the bundled workflows are in workflows/.
+#
+#   ./bin/workflow NAME [FOLDER]   run workflows/NAME (or a folder holding
+#                                  graph.jsonc) on FOLDER, default the
+#                                  current folder
+#   ./bin/workflow check NAME      check a graph and print its states
+#   ./bin/workflow list            list the bundled workflows
+#
+# Each run writes its trace and one log per step to
+# FOLDER/workflow-logs/RUN/. It needs the server from ./bin/serve-qwen.
+#
+# Settings:
+#   WORKFLOW_AGENT    the agent a state runs unless it names one: pi
+#                     (default), opencode or codex
+#   WORKFLOW_TIMEOUT  seconds a step may take unless the state sets its own,
+#                     default 600
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+# graph_dir NAME prints the folder of workflow NAME.
+graph_dir() {
+  local dir
+  if [[ "$1" == */* || "$1" == . ]]; then
+    dir="$1"
+  else
+    [[ "$1" =~ ^[a-z][a-z0-9-]*$ ]] || die "'$1' is not a workflow name; ./bin/workflow list shows them"
+    dir="$PUNY_ROOT/workflows/$1"
+  fi
+  [[ -f "$dir/graph.jsonc" ]] || die "$dir/graph.jsonc does not exist; ./bin/workflow list shows the bundled workflows"
+  (cd "$dir" && pwd)
+}
+
+case "${1:-}" in
+  list)
+    [[ $# -eq 1 ]] || die "usage: $PUNY_ROOT/bin/workflow list"
+    for graph in "$PUNY_ROOT"/workflows/*/graph.jsonc; do
+      name="$(basename "$(dirname "$graph")")"
+      printf '%-12s %s\n' "$name" "$(python3 -I "$PUNY_ROOT/lib/workflow.py" check "$(dirname "$graph")" | head -n 1)"
+    done
+    ;;
+  check)
+    [[ $# -eq 2 ]] || die "usage: $PUNY_ROOT/bin/workflow check NAME"
+    exec python3 -I "$PUNY_ROOT/lib/workflow.py" check "$(graph_dir "$2")"
+    ;;
+  ""|-h|--help)
+    die "usage: $PUNY_ROOT/bin/workflow NAME [FOLDER] | check NAME | list"
+    ;;
+  *)
+    [[ $# -le 2 ]] || die "usage: $PUNY_ROOT/bin/workflow NAME [FOLDER]"
+    dir="$(graph_dir "$1")"
+    [[ -d "${2:-.}" ]] || die "${2:-.} is not a folder"
+    resolve_workflow_settings
+    require_mlx_server
+    export WORKFLOW_AGENT WORKFLOW_TIMEOUT
+    exec python3 -I "$PUNY_ROOT/lib/workflow.py" run "$dir" "${2:-.}"
+    ;;
+esac

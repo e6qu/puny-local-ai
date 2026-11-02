@@ -37,16 +37,16 @@ run_agent() {
   esac
 }
 
-# resolve_team_solve_settings sets TEAM_SOLVE_AGENT (default pi) and
-# TEAM_SOLVE_TIMEOUT (seconds per step, default 600) and checks them.
-# ./bin/team-solve and ./bin/config check both use it.
-resolve_team_solve_settings() {
-  TEAM_SOLVE_AGENT="${TEAM_SOLVE_AGENT:-pi}"
-  [[ " ${RUN_AGENTS[*]} " == *" $TEAM_SOLVE_AGENT "* ]] \
-    || die "TEAM_SOLVE_AGENT must be one of: ${RUN_AGENTS[*]}; it is '$TEAM_SOLVE_AGENT'"
-  TEAM_SOLVE_TIMEOUT="${TEAM_SOLVE_TIMEOUT:-600}"
-  [[ "$TEAM_SOLVE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] \
-    || die "TEAM_SOLVE_TIMEOUT must be a positive whole number of seconds"
+# resolve_workflow_settings sets WORKFLOW_AGENT (default pi) and
+# WORKFLOW_TIMEOUT (seconds per step, default 600) and checks them.
+# ./bin/workflow and ./bin/config check both use it.
+resolve_workflow_settings() {
+  WORKFLOW_AGENT="${WORKFLOW_AGENT:-pi}"
+  [[ " ${RUN_AGENTS[*]} " == *" $WORKFLOW_AGENT "* ]] \
+    || die "WORKFLOW_AGENT must be one of: ${RUN_AGENTS[*]}; it is '$WORKFLOW_AGENT'"
+  WORKFLOW_TIMEOUT="${WORKFLOW_TIMEOUT:-600}"
+  [[ "$WORKFLOW_TIMEOUT" =~ ^[1-9][0-9]*$ ]] \
+    || die "WORKFLOW_TIMEOUT must be a positive whole number of seconds"
 }
 
 # Exits unless OpenCode 2.0 or later is installed. The configs this project

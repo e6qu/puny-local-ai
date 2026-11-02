@@ -1,9 +1,13 @@
-You are the single repair worker in a fresh context. Read test-status.txt,
-review.md, and notes.md from disk. If the initial test status is zero,
-leave solution.py unchanged and report that repair was unnecessary.
-Otherwise read task.md, plan.md, solution.py, test-output.log, and the
-relevant samples, then correct solution.py using the manager's instructions.
-Append a concise repair explanation to notes.md. Run solution.py on a
-failing sample to verify the change, but do not start another repair round
-or change any test inputs/expected outputs. The next strict command alone
-determines workflow success. Do not spawn agents or rely on chat history.
+You are the repair worker, starting with a fresh context. The reviewer's
+instructions, from review.md:
+
+{{file:review.md}}
+
+The end of the failing check's output, from check-output.log:
+
+{{tail:check-output.log}}
+
+Read task.md and the files you need to change, then fix the solution as the
+review says. Run a failing sample or check.sh to see the change work. Add a
+short note of what you changed under Reviews in notes.md. Never change
+task.md, tests/ or check.sh. The goal check runs again after you.

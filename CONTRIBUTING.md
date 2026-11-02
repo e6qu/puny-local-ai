@@ -1,17 +1,17 @@
 # Contributing
 
-Thanks for helping. This file covers how the repo is laid out, the rules every change follows, and what to run before you send one.
+How the repo is laid out, the rules every change follows, and what to run before sending one.
 
 ## Getting set up
 
-Follow the [bootstrap in the README](README.md#bootstrap). For work that does not touch the default model, the small model is enough and saves memory:
+Follow the [README's bootstrap](README.md#bootstrap). Unless the work concerns the default model, the small one is enough:
 
 ```sh
 ./bin/setup mlx small opencode pi
 QWEN_PRESET=small ./bin/serve-qwen
 ```
 
-You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck`).
+You also need [ShellCheck](https://www.shellcheck.net): `brew install shellcheck`.
 
 ## Layout
 
@@ -19,7 +19,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/common.sh`: settings shared by every script, including reading `puny.conf`, `die`, and the server checks.
 - `lib/config.py`: writes `puny.conf` for `./bin/config` and the web UI, and holds each setting's help. A new setting goes in both its `SETTINGS` and `CONFIG_SETTINGS` in `lib/common.sh`.
 - `lib/mlx.sh`: the model presets, the mlx-lm environment and model downloads.
-- `lib/agents.sh`: the pinned OpenCode and Pi versions, and how to run OpenCode, Pi and Codex for the smoke test, the benchmark and `./bin/team-solve`.
+- `lib/agents.sh`: the pinned OpenCode and Pi versions, and `run_agent`, which the smoke test, the benchmark and the workflows use to run an agent once.
 - `lib/mlx-lm.lock`: mlx-lm and its dependencies, with hashes.
 - `lib/serve.py`: runs mlx_lm.server behind the memory and disk guards, and adds the Responses API and its own `/v1/models`. It hooks into mlx-lm's server internals and refuses to run with any mlx-lm version other than the pinned one, so check it again when moving the pin.
 - `lib/responses.py`: translates the Responses API that Codex speaks into Chat Completions and back; [docs/how-it-works.md](docs/how-it-works.md#how-codex-is-served) describes it.
@@ -28,14 +28,16 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/verify_model.py`: the model hash check, for either source.
 - `lib/verify.py`: sums up the server log for `./bin/verify`'s report: each request's memory peak against its estimate, refusals and watchdog stops. It reads the lines `lib/serve.py` logs, so change both together.
 - `lib/models.py`: `./bin/models search`, `info` and `list`, including the memory estimate for a model that is not downloaded.
+- `lib/workflow.py`: the workflow engine behind `./bin/workflow`: it checks a graph and runs it ([docs/workflows.md](docs/workflows.md)).
+- `lib/evals.py`: `./bin/evals`.
 - `ui/`: the web UI, a Go program that uses only the standard library. `main.go` describes it; `handlers.go` holds the pages and actions, `server.go` the model server control, `jobs.go` the jobs, `templates/` the HTML (one file per page in `pages/`, the shared parts in `partials.html`), and `static/` the stylesheet and the one script. Pages may not use inline scripts or styles: the Content-Security-Policy forbids them. Every action goes through a `bin/` command, never around it.
 - `lib/webui.sh`: the pinned Go and HTMX, and how `ui/` is built into `state/web-ui/`.
 - `lib/integrate.py` and `lib/jsonc.py`: add the provider to the agents' own configs and remove it again, editing JSON and JSONC in place without touching anything else. `lib/integrate.py` also generates the config the launchers pass, so both always agree.
 - `tests/`: the test suite; see [Tests](#tests).
 - `bench/`: the benchmark tasks. Each has `start/` (the project the agent gets), `hidden/` (tests it never sees), `prompt.txt` and an optional `check` script.
 - `evals/`: the cases `./bin/evals` (`lib/evals.py`) asks the model directly: `tool-calls/*.json` conversations, each expected step with an `example` that passes it, and `coding/NAME/` problems with `prompt.md` and hidden tests. Every coding problem and bench task has a reference solution under `tests/fixtures/`, and the tests check that it passes and that the unsolved start fails.
-- `workflows/team-solve/`: the prompts and sample checker `./bin/team-solve` runs, adapted from Memdoor under Apache-2.0. Keep its `LICENSE`, `NOTICE` and `CHANGES.md` with it, and add any further change to `CHANGES.md`.
-- `docs/`: background that does not belong in the README. [docs/how-it-works.md](docs/how-it-works.md) holds the implementation details; keep the README to what users do.
+- `workflows/NAME/`: a workflow's `graph.jsonc`, its prompts and an `example/` folder. `workflows/team-solve/` is adapted from Memdoor under Apache-2.0: keep its `LICENSE`, `NOTICE` and `CHANGES.md`, and record every further change in `CHANGES.md`.
+- `docs/`: background the README links to. Keep the README to what users do; implementation details go in [docs/how-it-works.md](docs/how-it-works.md).
 - `state/`: everything downloaded or produced at run time. It is ignored by git; delete it to start over.
 - `puny.conf`: the user's settings, also ignored by git. The tests never read the real one: each runs in a copy of the repo.
 
@@ -52,7 +54,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - **OpenCode 2 only.** Configs use the OpenCode 2 format; check the version with `require_opencode_2` before relying on it.
 - **Test every change.** New behavior comes with tests, and a fixed bug with a test that fails without the fix.
 - **Source every claim.** Facts about mlx-lm, models and agents link to the exact commit or version they come from, as the existing docs do. Measurements say when and how they were taken.
-- **Write plainly.** Full sentences, active voice, no invented shorthand. Lists of three or more items are bullet points.
+- **Write plainly and briefly.** Full sentences, active voice, no invented shorthand, nothing a reader does not need. Lists of three or more items are bullet points. Commands in docs start with `./`.
 
 ## Changing pins
 
@@ -66,15 +68,15 @@ After any pin change, run `./bin/licenses` and replace the tables in THIRD_PARTY
 ## Tests
 
 ```sh
-./tests/run              # fast tests, about four minutes: no network, no model, no real agents
-./tests/run --live       # adds the live tests, about six minutes
+./tests/run              # fast tests, about five minutes: no network, no model, no real agents
+./tests/run --live       # adds the live tests against the small model; allow two hours
 ./tests/run integrate    # only tests whose name contains "integrate"
 ```
 
-Every test runs the scripts from a temporary copy of the repo, with its own `state/` and its own home folder, so tests never touch your agent configs, downloads or `~/`. They run in the mlx-lm environment, which `./tests/run` installs if needed. `./tests/run` also builds the web UI, runs `go vet`, a `gofmt` check and the Go tests in `ui/`, then hands the built program to `tests/test_webui.py`, which drives it over HTTP with the real `bin/` commands. To run only the Go tests while working on `ui/`, use the pinned Go the same way `lib/webui.sh` does: `source lib/common.sh; source lib/webui.sh; go_in_ui test ./...` in bash.
+Every test runs the scripts from a temporary copy of the repo with its own `state/` and home folder, so it never touches your configs, downloads or `~/`. `./tests/run` also builds the web UI, runs `go vet`, `gofmt` and the Go tests in `ui/`, and drives the built program over HTTP in `tests/test_webui.py`. For the Go tests alone, in bash: `source lib/common.sh; source lib/webui.sh; go_in_ui test ./...`.
 
-- **Fast tests** cover every script and library. Stub programs stand in for `npm`, `node`, `df`, `uv`, `opencode`, `pi` and `codex`; a fake mlx-lm environment and fake model folders stand in for the real ones; local fakes stand in for `mlx_lm.server`, Hugging Face and ModelScope, which are otherwise blocked; and the memory readings are replaced where a test needs a full or empty machine. They never download anything or touch the real `state/`. The benchmark tests apply reference solutions from `tests/fixtures/solutions/` to show that each task can be solved and that its hidden tests catch the unsolved start.
-- **Live tests** need `./bin/setup mlx small opencode pi`, Codex (`brew install codex`), network access and about 7 GiB of free memory. They start the guarded server with the small model and run the checks and all three real agents against it; run `./bin/integrate` against the real OpenCode, Pi and Codex; start a private OpenCode background service on its own port to check the restart notice; and check that every pinned model commit still exists and that `./bin/licenses` still matches THIRD_PARTY.md.
+- **Fast tests** cover every script and library. Stubs stand in for `npm`, `node`, `df`, `uv` and the agents (the workflow tests use one that runs the `STUB:` lines of its prompt); fakes stand in for the mlx-lm environment, the models, `mlx_lm.server`, Hugging Face and ModelScope. Reference solutions in `tests/fixtures/solutions/` show that each benchmark task can be solved and that its hidden tests catch the unsolved start.
+- **Live tests** need `./bin/setup mlx small opencode pi`, Codex, network access and about 7 GiB of free memory. They run the real server, agents and workflows with the small model, `./bin/integrate` against the real agents, and check that every pinned model commit still exists and that `./bin/licenses` matches THIRD_PARTY.md.
 
 ## Before sending a change
 
@@ -91,7 +93,7 @@ Every test runs the scripts from a temporary copy of the repo, with its own `sta
 
 4. The README and `docs/` match the change, and every new doc is linked from the README's "More documentation".
 
-Keep one change per pull request. Pull requests are squash-merged into a single commit with a one-line message, so the branch history does not need tidying.
+One change per pull request; each lands as one commit with a one-line message.
 
 ## License
 

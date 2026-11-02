@@ -1,41 +1,67 @@
 {{define "content"}}
-<div class="pagehead"><h1>Team-solve</h1><p class="muted">Solves a programming problem with a team of fresh agent runs: a planner, two ideators, a solver, a sample test, a reviewer, one repair, and a final test that alone decides success. The method is GVS5H's, as written up in Memdoor's team-solve workflow; the prompts are in <code>workflows/team-solve/</code>. Each run is <code>./bin/team-solve</code>, and needs the server running.</p></div>
+<div class="pagehead"><h1>Workflows</h1><p class="muted">State machines of fresh agent runs: each step does one narrow job with a short context, hands on through files, and the folder's check decides when it is done. Each run is <code>./bin/workflow</code> on a folder in <code>state/</code>; the graphs are in <code>workflows/</code>. They need the server running.</p></div>
 {{if .Data.Error}}<div class="notice bad">{{.Data.Error}}</div>{{end}}
+<h2>Team-solve</h2>
+<p class="muted">A planner, two ideators and a solver, then check, review and repair until the goal passes, at most three reviews. The result can be any files in any language. After GVS5H's method as written up in Memdoor's team-solve.</p>
 <div class="grid2">
 <form class="card" hx-post="/workflows/team-solve" hx-target="#new-notice" hx-disabled-elt="find button">
   <div class="cardhead"><h2>New problem</h2><a href="/workflows?example=1">Fill in the example</a></div>
-  <label class="field">Name <input name="name" value="{{.Data.Example.Name}}" placeholder="for example two-sum" required pattern="[A-Za-z0-9._-]+"></label>
-  <label class="field">Task <span class="muted">task.md: the problem, and how solution.py reads input and prints its answer</span>
+  <label class="field">Name <input name="name" value="{{.Data.Example.Name}}" placeholder="for example two-sum" required pattern="[A-Za-z0-9_\-][A-Za-z0-9._\-]*"></label>
+  <label class="field">Task <span class="muted">task.md: what to build</span>
     <textarea name="task" rows="8" required>{{.Data.Example.Task}}</textarea></label>
+  <p class="muted">The goal: samples, which the team's <code>run.sh</code> must turn into the expected output, a <code>check.sh</code>, or both.</p>
   {{range $i, $in := .Data.Example.Inputs}}<div class="sample">
     <label class="field">Sample {{inc $i}} input<textarea name="in{{inc $i}}" rows="3">{{$in}}</textarea></label>
     <label class="field">Expected output<textarea name="out{{inc $i}}" rows="3">{{index $.Data.Example.Outputs $i}}</textarea></label>
   </div>{{end}}
-  {{template "team-solve-options" .Data}}
+  <label class="field">check.sh <span class="muted">exits 0 when the task is done</span>
+    <textarea name="check" rows="3" placeholder="python3 -m unittest">{{.Data.Example.Check}}</textarea></label>
+  {{template "workflow-options" .Data}}
   <div class="row"><span class="grow"></span><button class="primary">Create and solve</button></div>
   <div id="new-notice"></div>
 </form>
-<div>
-  <form class="card" hx-post="/workflows/team-solve" hx-target="#again-notice" hx-disabled-elt="find button">
-    <div class="cardhead"><h2>Run again</h2><span class="muted">problems in state/team-solve/</span></div>
-    {{if .Data.Problems}}<label class="field">Problem <select name="existing">{{range .Data.Problems}}<option>{{.}}</option>{{end}}</select></label>
-    {{template "team-solve-options" .Data}}
-    <div class="row"><span class="grow"></span><button class="primary">Solve</button></div>{{else}}<p class="muted">No problems yet.</p>{{end}}
-    <div id="again-notice"></div>
-  </form>
-  <section class="card">
-    <div class="cardhead"><h2>Runs</h2></div>
-    {{template "job-table" .Data.Runs}}
-  </section>
+<form class="card" hx-post="/workflows/team-solve" hx-target="#again-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>Run again</h2><span class="muted">problems in state/team-solve/</span></div>
+  {{if .Data.Problems}}<label class="field">Problem <select name="existing">{{range .Data.Problems}}<option>{{.}}</option>{{end}}</select></label>
+  {{template "workflow-options" .Data}}
+  <div class="row"><span class="grow"></span><button class="primary">Solve</button></div>{{else}}<p class="muted">No problems yet.</p>{{end}}
+  <div id="again-notice"></div>
+</form>
 </div>
+<h2>Goal</h2>
+<p class="muted">Checks, and while the check fails, one fresh worker takes one step and notes it in <code>progress.md</code> for the next, at most eight steps. Each sees only the goal, the latest notes and the end of the check's output.</p>
+<div class="grid2">
+<form class="card" hx-post="/workflows/goal" hx-target="#goal-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>New goal</h2><a href="/workflows?goal-example=1">Fill in the example</a></div>
+  <label class="field">Name <input name="name" value="{{.Data.GoalExample.Name}}" placeholder="for example fix-parser" required pattern="[A-Za-z0-9_\-][A-Za-z0-9._\-]*"></label>
+  <label class="field">Goal <span class="muted">goal.md</span>
+    <textarea name="goal" rows="6" required>{{.Data.GoalExample.Goal}}</textarea></label>
+  <label class="field">check.sh <span class="muted">exits 0 once the goal is met</span>
+    <textarea name="check" rows="3" required>{{.Data.GoalExample.Check}}</textarea></label>
+  {{if .Data.GoalExample.Example}}<input type="hidden" name="example" value="1"><p class="muted">The example's <code>textstats.py</code> and its tests are copied in too.</p>{{end}}
+  {{template "workflow-options" .Data}}
+  <div class="row"><span class="grow"></span><button class="primary">Create and run</button></div>
+  <div id="goal-notice"></div>
+</form>
+<form class="card" hx-post="/workflows/goal" hx-target="#goal-again-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>Run again</h2><span class="muted">goals in state/goal/</span></div>
+  {{if .Data.Goals}}<label class="field">Goal <select name="existing">{{range .Data.Goals}}<option>{{.}}</option>{{end}}</select></label>
+  {{template "workflow-options" .Data}}
+  <div class="row"><span class="grow"></span><button class="primary">Run</button></div>{{else}}<p class="muted">No goals yet.</p>{{end}}
+  <div id="goal-again-notice"></div>
+</form>
 </div>
+<section class="card">
+  <div class="cardhead"><h2>Runs</h2></div>
+  {{template "job-table" .Data.Runs}}
+</section>
 {{end}}
-{{define "team-solve-options"}}<div class="options">
+{{define "workflow-options"}}<div class="options">
   <label class="field">Agent <select name="agent">
-    {{$agent := ""}}{{with .Settings}}{{$agent = .Get "TEAM_SOLVE_AGENT"}}{{end}}
+    {{$agent := ""}}{{with .Settings}}{{$agent = .Get "WORKFLOW_AGENT"}}{{end}}
     <option value="pi"{{if eq $agent "pi"}} selected{{end}}>Pi</option>
     <option value="opencode"{{if eq $agent "opencode"}} selected{{end}}>OpenCode</option>
     <option value="codex"{{if eq $agent "codex"}} selected{{end}}>Codex</option>
   </select></label>
-  <label class="field">Seconds per step <input name="timeout" inputmode="numeric" placeholder="{{with .Settings}}{{.Get "TEAM_SOLVE_TIMEOUT"}}{{end}}"></label>
+  <label class="field">Seconds per step <input name="timeout" inputmode="numeric" placeholder="{{with .Settings}}{{.Get "WORKFLOW_TIMEOUT"}}{{end}}"></label>
 </div>{{end}}

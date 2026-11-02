@@ -6,9 +6,9 @@ This repository contains its own work, under the MIT license in [LICENSE](LICENS
 
 | Path | Source | License | What changed |
 |---|---|---|---|
-| [`workflows/team-solve/`](workflows/team-solve/) prompts and `check-samples.sh` | Memdoor's [`examples/workflows/team-solve`](https://github.com/guregodevo/memdoor/tree/cee3ca70ff62acf3018cedea8b7b3b742c597682/examples/workflows/team-solve) at commit `cee3ca70`, Copyright 2026 Gregory Desvaux; the method is [GVS5H](https://github.com/slee-persis/GVS5H)'s | Apache-2.0: the folder carries the [LICENSE](workflows/team-solve/LICENSE) and the [NOTICE](workflows/team-solve/NOTICE) | [CHANGES.md](workflows/team-solve/CHANGES.md): the YAML steps became one prompt file each, run in order by `./bin/team-solve`; the ideators run one after the other; no retries |
+| [`workflows/team-solve/`](workflows/team-solve/): the graph, prompts and `run-checks.sh` | Memdoor's [`examples/workflows/team-solve`](https://github.com/guregodevo/memdoor/tree/cee3ca70ff62acf3018cedea8b7b3b742c597682/examples/workflows/team-solve) at commit `cee3ca70`, Copyright 2026 Gregory Desvaux; the method is [GVS5H](https://github.com/slee-persis/GVS5H)'s | Apache-2.0: the folder carries the [LICENSE](workflows/team-solve/LICENSE) and the [NOTICE](workflows/team-solve/NOTICE) | [CHANGES.md](workflows/team-solve/CHANGES.md): the YAML steps became a graph with a review and repair loop; any task and goal instead of one `solution.py`; the ideators run one after the other; no retries |
 
-The example problem in `workflows/team-solve/example/` was written for this project, under MIT.
+The examples in `workflows/*/example/` and the `goal` workflow were written for this project, under MIT.
 
 ## How downloads are pinned and checked
 
@@ -26,9 +26,9 @@ Installed beforehand, as the [README's bootstrap](README.md#bootstrap) describes
 - Apple's command line tools, for `git` and `python3`. `curl`, `perl`, `lsof` and `vm_stat` come with macOS.
 - [uv](https://github.com/astral-sh/uv) (MIT or Apache-2.0), which downloads Python 3.14.6 (PSF-2.0) for mlx-lm.
 - Node.js 22.19 or newer with npm, for OpenCode and Pi.
-- Optionally, [Codex](https://github.com/openai/codex) (Apache-2.0), from `brew install codex`; tested with 0.165.0.
+- Optionally, [Codex](https://github.com/openai/codex) (Apache-2.0), from `brew install codex`; tested with 0.166.0.
 
-OpenCode is pinned to 2.1.1. As of 2026-10-22, every test had run on OpenCode 2.0.32, the version installed here; 2.1.1 was published on 2026-10-20 at 13:33 UTC.
+OpenCode is pinned to 2.1.1, but the live tests here have run on 2.0.32, the version installed on this Mac.
 
 ## Licenses
 
@@ -116,5 +116,5 @@ These shaped the code; apart from the one mlx-lm function noted below, none of t
 - **OpenCode v2 and Pi documentation**: the configuration formats written by `./bin/integrate`, `./bin/opencode-qwen` and `./bin/pi-qwen` and shown in the README ([OpenCode migration notes](https://opencode.ai/v2/docs/migrate-v1/), [OpenCode config docs at v2.1.1](https://github.com/anomalyco/opencode/blob/ba546ec1598a70db2570e9c6258028d955ba8f58/packages/web/src/content/docs/config.mdx), [Pi model docs at v1.3.0](https://github.com/earendil-works/pi/blob/71023aec1546d6d677a65669c5665c0927ce0dd0/packages/coding-agent/docs/models.md)).
 - **Codex 0.163.0 source** ([commit `83086188`](https://github.com/openai/codex/tree/83086188ae0614bd882818ff1aa23f3194962012/codex-rs), Apache-2.0): the Responses API requests and events that `lib/responses.py` translates, and the model list format `lib/serve.py` answers. No code is copied.
 - **Hugging Face and ModelScope APIs**: the search, commit and file-list endpoints `lib/sources.py` calls, as [docs/how-it-works.md](docs/how-it-works.md#where-models-come-from) lists them.
-- **A ChatGPT answer** ("Connect Qwen to coding agents" and "Verify tool calling") was the starting point for this project. The scripts were written from scratch against the tools' current versions; [docs/compatibility.md](docs/compatibility.md#differences-from-the-original-guide) lists where they differ from it.
+- **A ChatGPT answer** ("Connect Qwen to coding agents" and "Verify tool calling") was the starting point for this project. The scripts were written from scratch against the tools' current versions.
 - **Benchmark tasks** in `bench/`, the tests in `tests/` and their reference solutions in `tests/fixtures/` were written for this project.

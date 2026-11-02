@@ -207,21 +207,34 @@ class RealServerTest(unittest.TestCase):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/v1/models", timeout=30) as response:
             self.assertEqual([m["id"] for m in json.load(response)["data"]], ["default_model"])
 
-    def test_team_solve_runs_every_step_with_the_real_model(self):
-        # A 4B model may or may not solve it; what is tested is that every step
-        # runs on the real agent and model, and that the samples decide.
+    def test_team_solve_runs_its_steps_with_the_real_model(self):
+        # A 4B model may or may not solve it; what is tested is that the steps
+        # run on the real agent and model, and that the goal check decides.
         problem = self.box.work / "team-problem"
         shutil.copytree(REPO / "workflows" / "team-solve" / "example", problem)
-        result = self.run_script(["bin/team-solve", str(problem)], extra={"TEAM_SOLVE_TIMEOUT": "600"}, timeout=4500)
+        result = self.run_script(["bin/team-solve", str(problem)], extra={"WORKFLOW_TIMEOUT": "600"}, timeout=7200)
         output = result.stdout + result.stderr
-        for step in ("plan", "ideate-a", "ideate-b", "solve", "test", "review", "repair", "verify"):
-            self.assertIn(f"== {step}: ", output)
-        for name in ("plan.md", "notes.md", "solution.py", "test-output.log", "final-test-output.log"):
+        for step in ("plan", "ideate-a", "ideate-b", "solve", "check"):
+            self.assertIn(f"== {step}", output)
+        for name in ("plan.md", "notes.md", "check-output.log"):
             self.assertTrue((problem / name).exists(), name)
         if result.returncode == 0:
-            self.assertIn("Samples: 3; failures: 0", (problem / "final-test-output.log").read_text())
+            self.assertIn("Samples: 3; failures: 0", (problem / "check-output.log").read_text())
         else:
-            self.assertIn("solution.py fails the samples", result.stderr)
+            self.assertIn("the workflow ended in failure", result.stderr)
+
+    def test_the_goal_workflow_with_the_real_model(self):
+        folder = self.box.work / "goal"
+        shutil.copytree(REPO / "workflows" / "goal" / "example", folder)
+        result = self.run_script(["bin/workflow", "goal", str(folder)], extra={"WORKFLOW_TIMEOUT": "600"}, timeout=7200)
+        output = result.stdout + result.stderr
+        self.assertIn("== check: fail", output)
+        self.assertIn("== work (1 of 8)", output)
+        self.assertTrue((folder / "progress.md").exists())
+        if result.returncode == 0:
+            self.assertIn("OK", (folder / "check-output.log").read_text())
+        else:
+            self.assertIn("the workflow ended in failure", result.stderr)
 
     def test_smoke_test_with_every_real_agent(self):
         result = self.run_script(["bin/smoke-test"], timeout=1500)

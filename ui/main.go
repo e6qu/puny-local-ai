@@ -10,7 +10,7 @@
 //     puny.conf, so the file stays the one source of the settings;
 //   - the model server through bin/serve-qwen, with its memory guards;
 //   - models through bin/models and bin/setup;
-//   - workflows and benchmarks through bin/team-solve, bin/bench-agents,
+//   - workflows and benchmarks through bin/team-solve, bin/workflow, bin/bench-agents,
 //     bin/evals and bin/smoke-test, run as jobs whose output is kept in
 //     state/jobs/.
 //

@@ -17,4 +17,4 @@ One integer: the length of the longest rising run.
 ## Constraints
 N up to 200000, so the solution must run in O(N) or O(N log N) time.
 
-Write the program as solution.py reading stdin and printing the answer.
+Write the program in Python as solution.py, reading standard input and printing the answer.

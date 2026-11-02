@@ -22,7 +22,7 @@ case "$1" in
     {"key": "MLX_BASE_URL", "source": "default", "value": "http://127.0.0.1:9/v1", "group": "server", "help": "Where it listens."},
     {"key": "QWEN_TEMP", "source": "puny.conf", "value": "0.7", "group": "server", "help": "Temperature."},
     {"key": "QWEN_REPO", "source": "default", "value": "org/m", "group": "model", "help": "The model."},
-    {"key": "TEAM_SOLVE_AGENT", "source": "environment", "value": "pi", "group": "tools", "help": "The agent."}]}' "$conf" ;;
+    {"key": "WORKFLOW_AGENT", "source": "environment", "value": "pi", "group": "tools", "help": "The agent."}]}' "$conf" ;;
   set) shift; echo "$@" >> "$(dirname "$0")/../set.log"; echo "Saved." ;;
   raw) [ ! -f "$conf" ] || cat "$conf" ;;
   replace) text="$(cat)"; case "$text" in *BOGUS*) echo "error: BOGUS is not a setting" >&2; exit 1 ;; esac
@@ -39,6 +39,7 @@ esac`,
 	"bench-agents": `echo "label  task  agent  passed"`,
 	"evals":        `echo "no results under state/evals yet" >&2; exit 1`,
 	"team-solve":   `echo "team-solve in $1"; cat "$1/task.md"`,
+	"workflow":     `echo "workflow $1 in $2"; cat "$2/goal.md"`,
 }
 
 func newTestApp(t *testing.T) (*App, string) {
@@ -53,6 +54,11 @@ func newTestApp(t *testing.T) (*App, string) {
 	os.WriteFile(filepath.Join(example, "../task.md"), []byte("# Example task\n"), 0o644)
 	os.WriteFile(filepath.Join(example, "1.in"), []byte("1 2\n"), 0o644)
 	os.WriteFile(filepath.Join(example, "1.out"), []byte("3\n"), 0o644)
+	goal := filepath.Join(repo, "workflows", "goal", "example")
+	os.MkdirAll(goal, 0o755)
+	os.WriteFile(filepath.Join(goal, "goal.md"), []byte("# Example goal\n"), 0o644)
+	os.WriteFile(filepath.Join(goal, "check.sh"), []byte("python3 -m unittest\n"), 0o644)
+	os.WriteFile(filepath.Join(goal, "code.py"), []byte("x = 1\n"), 0o644)
 	a, err := NewApp(Options{Repo: repo, Origin: origin, HTMX: []byte("/* htmx */"), HTMXVersion: "2.0.11"})
 	if err != nil {
 		t.Fatal(err)
@@ -104,20 +110,21 @@ func TestRefusesOtherSites(t *testing.T) {
 func TestEveryPageRenders(t *testing.T) {
 	a, _ := newTestApp(t)
 	for path, want := range map[string]string{
-		"/":                    "Server",
-		"/models":              "a small one",
-		"/discover":            "Discover",
-		"/discover?q=x":        "org/found",
-		"/chat":                `id="prompt"`,
-		"/workflows":           "New problem",
-		"/workflows?example=1": "# Example task",
-		"/benchmarks":          "no results under state/evals yet",
-		"/agents":              "opencode: not installed",
-		"/jobs":                "No jobs yet.",
-		"/settings":            "TEAM_SOLVE_AGENT",
-		"/settings/file":       "There is no puny.conf yet",
-		"/settings/about":      "2.0.11",
-		"/fragments/statusbar": "memory",
+		"/":                         "Server",
+		"/models":                   "a small one",
+		"/discover":                 "Discover",
+		"/discover?q=x":             "org/found",
+		"/chat":                     `id="prompt"`,
+		"/workflows":                "New problem",
+		"/workflows?example=1":      "# Example task",
+		"/workflows?goal-example=1": "# Example goal",
+		"/benchmarks":               "no results under state/evals yet",
+		"/agents":                   "opencode: not installed",
+		"/jobs":                     "No jobs yet.",
+		"/settings":                 "WORKFLOW_AGENT",
+		"/settings/file":            "There is no puny.conf yet",
+		"/settings/about":           "2.0.11",
+		"/fragments/statusbar":      "memory",
 	} {
 		w := call(a, "GET", path, nil, nil)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
@@ -142,7 +149,7 @@ func TestSettingsSaveOnlyWhatChanged(t *testing.T) {
 		"set.QWEN_TEMP": {"0.4"}, "loaded.QWEN_TEMP": {"0.7"},
 		"set.QWEN_REPO": {""}, "loaded.QWEN_REPO": {""},
 		// The environment's setting is not editable, even if sent.
-		"set.TEAM_SOLVE_AGENT": {"codex"}, "loaded.TEAM_SOLVE_AGENT": {""},
+		"set.WORKFLOW_AGENT": {"codex"}, "loaded.WORKFLOW_AGENT": {""},
 	}
 	w := call(a, "POST", "/settings", form, nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Saved.") {
@@ -201,7 +208,7 @@ func TestTeamSolveWritesTheProblemAndRunsIt(t *testing.T) {
 	}
 	id := strings.TrimPrefix(w.Header().Get("HX-Redirect"), "/jobs/")
 	s := waitFor(t, a.jobs, id, "done")
-	if s.Env["TEAM_SOLVE_AGENT"] != "opencode" || s.Folder != dir {
+	if s.Env["WORKFLOW_AGENT"] != "opencode" || s.Folder != dir {
 		t.Fatalf("job: %+v", s.Job)
 	}
 	page := call(a, "GET", "/jobs/"+id, nil, nil).Body.String()
@@ -217,11 +224,69 @@ func TestTeamSolveWritesTheProblemAndRunsIt(t *testing.T) {
 		{"name": {"../up"}, "task": {"x"}, "in1": {"1"}, "out1": {"1"}},
 		{"name": {"half"}, "task": {"x"}, "in1": {"1"}},
 		{"name": {"none"}, "task": {"x"}},
+		{"name": {".hidden"}, "task": {"x"}, "check": {"true"}},
 		{"existing": {"../../etc"}},
 	} {
 		if w := call(a, "POST", "/workflows/team-solve", bad, nil); w.Code != http.StatusBadRequest {
 			t.Errorf("%v: %d", bad, w.Code)
 		}
+	}
+}
+
+func TestTeamSolveTakesACheckScriptAsItsGoal(t *testing.T) {
+	a, repo := newTestApp(t)
+	form := url.Values{"name": {"pkg"}, "task": {"Write a package."}, "check": {"python3 -m unittest\r\n"}}
+	if w := call(a, "POST", "/workflows/team-solve", form, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	data, _ := os.ReadFile(filepath.Join(repo, "state", "team-solve", "pkg", "check.sh"))
+	if string(data) != "python3 -m unittest\n" {
+		t.Fatalf("check.sh is %q", data)
+	}
+	if fileExists(filepath.Join(repo, "state", "team-solve", "pkg", "tests")) {
+		t.Fatal("a problem without samples has no tests folder")
+	}
+}
+
+func TestGoalWritesTheFolderAndRunsTheWorkflow(t *testing.T) {
+	a, repo := newTestApp(t)
+	form := url.Values{"name": {"stats"}, "goal": {"Finish it."}, "check": {"python3 -m unittest"}, "example": {"1"}, "timeout": {"60"}}
+	w := call(a, "POST", "/workflows/goal", form, nil)
+	if w.Code != http.StatusNoContent || !strings.HasPrefix(w.Header().Get("HX-Redirect"), "/jobs/") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	dir := filepath.Join(repo, "state", "goal", "stats")
+	for name, want := range map[string]string{"goal.md": "Finish it.\n", "check.sh": "python3 -m unittest\n", "code.py": "x = 1\n"} {
+		if data, _ := os.ReadFile(filepath.Join(dir, name)); string(data) != want {
+			t.Errorf("%s is %q, want %q", name, data, want)
+		}
+	}
+	id := strings.TrimPrefix(w.Header().Get("HX-Redirect"), "/jobs/")
+	s := waitFor(t, a.jobs, id, "done")
+	if s.Kind != "goal" || s.Env["WORKFLOW_TIMEOUT"] != "60" || s.Folder != dir || s.CommandLine() != "WORKFLOW_TIMEOUT=60 ./bin/workflow goal "+dir {
+		t.Fatalf("job: %+v %s", s.Job, s.CommandLine())
+	}
+	os.MkdirAll(filepath.Join(dir, "workflow-logs", "20261102-120000"), 0o755)
+	os.WriteFile(filepath.Join(dir, "workflow-logs", "20261102-120000", "trace.tsv"), []byte("step\tstate\n1\tcheck\n"), 0o644)
+	page := call(a, "GET", "/jobs/"+id, nil, nil).Body.String()
+	if !strings.Contains(page, "workflow goal in "+dir) || !strings.Contains(page, "workflow-logs/20261102-120000/trace.tsv") {
+		t.Fatalf("the job page lacks the output or the trace: %s", page)
+	}
+	if !strings.Contains(call(a, "GET", "/workflows", nil, nil).Body.String(), "<option>stats</option>") {
+		t.Fatal("the goal is not offered to run again")
+	}
+	for _, bad := range []url.Values{
+		form,
+		{"name": {"nocheck"}, "goal": {"x"}},
+		{"name": {"../up"}, "goal": {"x"}, "check": {"true"}},
+		{"existing": {"missing"}},
+	} {
+		if w := call(a, "POST", "/workflows/goal", bad, nil); w.Code != http.StatusBadRequest {
+			t.Errorf("%v: %d", bad, w.Code)
+		}
+	}
+	if w := call(a, "POST", "/workflows/goal", url.Values{"existing": {"stats"}}, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("run again: %d %s", w.Code, w.Body.String())
 	}
 }
 

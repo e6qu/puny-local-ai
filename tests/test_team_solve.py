@@ -1,4 +1,4 @@
-"""./bin/team-solve and workflows/team-solve/check-samples.sh."""
+"""./bin/team-solve and workflows/team-solve/run-checks.sh."""
 
 import subprocess
 import unittest
@@ -11,20 +11,20 @@ BAD = "a, b = map(int, input().split())\nprint(a - b)\n"
 
 # A stand-in agent that plays whichever team role its prompt names. It logs
 # the role, then does what the STUB_* settings say: STUB_SOLVER writes a good
-# or bad solution.py (or none), STUB_REPAIR=fix rewrites it correctly,
-# STUB_FAIL=<role> exits 3 in that role, STUB_HANG=<role> sleeps, and
-# STUB_NO_NOTES=1 makes the planner skip notes.md.
-TEAM_STUB = r'''
+# or bad solution.py with run.sh (or neither), STUB_REPAIR=fix rewrites it
+# correctly, STUB_FAIL=<role> exits 3 in that role, STUB_HANG=<role> sleeps,
+# and STUB_NO_NOTES=1 makes the planner skip notes.md.
+TEAM_STUB = r"""
 name="$(basename "$0")"
 if [[ "${1:-}" == --version ]]; then echo "2.1.1"; exit 0; fi
 prompt="${@: -1}"
 case "$prompt" in
   *"You are the planner"*) role=plan ;;
-  *"ideator A"*) role=ideate-a ;;
-  *"ideator B"*) role=ideate-b ;;
+  *"You are ideator A"*) role=ideate-a ;;
+  *"You are ideator B"*) role=ideate-b ;;
   *"You are the solver"*) role=solve ;;
-  *"manager/reviewer"*) role=review ;;
-  *"repair worker"*) role=repair ;;
+  *"You are the reviewer"*) role=review ;;
+  *"You are the repair worker"*) role=repair ;;
   *) role=unknown ;;
 esac
 echo "$role" >> "$STUB_CALLS/roles"
@@ -40,17 +40,17 @@ case "$role" in
   ideate-b) echo "Proposal B: also add" >> notes.md ;;
   solve)
     case "${STUB_SOLVER:-good}" in
-      good) printf '%s' "$STUB_GOOD" > solution.py ;;
-      bad) printf '%s' "$STUB_BAD" > solution.py ;;
+      good) printf '%s' "$STUB_GOOD" > solution.py; echo "python3 solution.py" > run.sh ;;
+      bad) printf '%s' "$STUB_BAD" > solution.py; echo "python3 solution.py" > run.sh ;;
       none) ;;
     esac ;;
-  review) echo "reviewed status $(cat test-status.txt)" > review.md ;;
+  review) echo "review of: $(tail -n 1 check-output.log)" > review.md ;;
   repair) [[ "${STUB_REPAIR:-}" == fix ]] && printf '%s' "$STUB_GOOD" > solution.py ;;
 esac
 exit 0
-'''
+"""
 
-ROLES = ["plan", "ideate-a", "ideate-b", "solve", "review", "repair"]
+FIRST = ["plan", "ideate-a", "ideate-b", "solve"]
 
 
 class TeamSolveTest(ServerCase):
@@ -66,25 +66,24 @@ class TeamSolveTest(ServerCase):
             (self.problem / "tests" / f"{n}.out").write_text(expected + "\n")
 
     def solve(self, *args, extra=None):
-        env = self.env | {"STUB_GOOD": GOOD, "STUB_BAD": BAD, "TEAM_SOLVE_TIMEOUT": "20"} | (extra or {})
+        env = self.env | {"STUB_GOOD": GOOD, "STUB_BAD": BAD, "WORKFLOW_TIMEOUT": "20"} | (extra or {})
         return self.box.run(["bin/team-solve", *(args or (str(self.problem),))], extra_env=env, timeout=120)
 
     def roles(self):
         return self.box.called("roles")
 
-    def test_a_good_solution_runs_every_step_once(self):
+    def test_a_good_solution_needs_no_review(self):
         result = self.solve()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Solved:", result.stdout)
-        self.assertEqual(self.roles(), ROLES)
-        for name in ("plan.md", "notes.md", "solution.py", "review.md", "test-output.log", "final-test-output.log"):
+        self.assertIn("== solved: success", result.stdout)
+        self.assertEqual(self.roles(), FIRST)
+        for name in ("plan.md", "notes.md", "solution.py", "run.sh", "check-output.log"):
             self.assertTrue((self.problem / name).exists(), name)
-        self.assertEqual((self.problem / "test-status.txt").read_text(), "0\n")
-        self.assertIn("reviewed status 0", (self.problem / "review.md").read_text())
-        self.assertIn("Samples: 2; failures: 0", (self.problem / "final-test-output.log").read_text())
-        runs = list((self.problem / "team-solve-logs").iterdir())
+        self.assertIn("Samples: 2; failures: 0", (self.problem / "check-output.log").read_text())
+        runs = list((self.problem / "workflow-logs").iterdir())
         self.assertEqual(len(runs), 1)
-        self.assertEqual(sorted(p.name for p in runs[0].iterdir()), sorted(f"{r}.log" for r in ROLES))
+        self.assertEqual(sorted(p.name for p in runs[0].iterdir()),
+                         ["01-plan.log", "02-ideate-a.log", "03-ideate-b.log", "04-solve.log", "05-check.log", "trace.tsv"])
 
     def runs_of(self, agent):
         """The agent's calls; a prompt spans lines in the log, so count only the lines a call starts with."""
@@ -97,82 +96,104 @@ class TeamSolveTest(ServerCase):
 
     def test_every_step_is_a_fresh_sessionless_run_in_the_problem_folder(self):
         self.solve()
-        self.assertEqual(len(self.runs_of("pi")), len(ROLES))
-        for role in ROLES:
+        self.assertEqual(len(self.runs_of("pi")), len(FIRST))
+        for role in FIRST:
             self.assertEqual((self.box.calls / f"cwd-{role}").read_text().strip(), str(self.problem))
 
-    def test_the_run_identifier_reaches_the_planner(self):
+    def test_the_prompts_carry_the_task_and_the_run(self):
         result = self.solve()
         run = result.stdout.split("team-solve ")[1].split()[0]
         plan = (self.box.calls / "prompt-plan").read_text()
         self.assertIn(f"the run identifier {run}", plan)
-        self.assertNotIn("{{run}}", plan)
-        self.assertEqual(plan.strip(), (REPO / "workflows" / "team-solve" / "plan.md").read_text().replace("{{run}}", run).strip())
+        self.assertIn("Add two numbers.", plan)
+        self.assertNotIn("{{", plan)
 
-    def test_a_failing_solution_is_repaired(self):
+    def test_a_failing_solution_is_reviewed_and_repaired(self):
         result = self.solve(extra={"STUB_SOLVER": "bad", "STUB_REPAIR": "fix"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.problem / "test-status.txt").read_text(), "1\n")
-        self.assertIn("FAIL tests/1.in: output differs", (self.problem / "test-output.log").read_text())
-        self.assertIn("reviewed status 1", (self.problem / "review.md").read_text())
-        self.assertIn("Solved:", result.stdout)
+        self.assertEqual(self.roles(), FIRST + ["review", "repair"])
+        self.assertIn("review of: Checks failed: 2", (self.problem / "review.md").read_text())
+        review = (self.box.calls / "prompt-review").read_text()
+        self.assertIn("FAIL tests/1.in: output differs", review)
+        self.assertIn("This is review 1 of 3", review)
+        self.assertIn("check: fail -> review", review)
 
-    def test_an_unrepaired_solution_fails_the_run(self):
+    def test_an_unrepaired_solution_stops_after_three_reviews(self):
         result = self.solve(extra={"STUB_SOLVER": "bad"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("solution.py fails the samples", result.stderr)
-        self.assertIn("Samples: 2; failures: 2", result.stdout)
-        self.assertEqual(self.roles(), ROLES)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.roles(), FIRST + ["review", "repair"] * 3)
+        self.assertIn("review: ran 3 times; going to unsolved", result.stdout)
+        self.assertIn("the workflow ended in failure", result.stderr)
 
-    def test_a_missing_solution_stops_before_testing(self):
+    def test_a_missing_solution_fails_the_check(self):
         result = self.solve(extra={"STUB_SOLVER": "none"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("the solver wrote no solution.py", result.stderr)
-        self.assertEqual(self.roles(), ROLES[:4])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("there is no run.sh", (self.problem / "check-output.log").read_text())
+
+    def test_a_check_script_is_a_goal_too(self):
+        (self.problem / "check.sh").write_text('grep -q "a + b" solution.py\n')
+        result = self.solve()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS check.sh", (self.problem / "check-output.log").read_text())
+        for path in (self.problem / "tests").iterdir():
+            path.unlink()
+        (self.problem / "check.sh").write_text("exit 1\n")
+        result = self.solve()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL check.sh", (self.problem / "check-output.log").read_text())
 
     def test_a_planner_without_notes_stops_the_run(self):
         result = self.solve(extra={"STUB_NO_NOTES": "1"})
-        self.assertIn("the planner wrote no notes.md", result.stderr)
+        self.assertIn("plan: pi did not write notes.md", result.stderr)
         self.assertEqual(self.roles(), ["plan"])
 
-    def test_a_failing_step_stops_the_run_and_names_its_log(self):
+    def test_a_failing_ideator_is_noted_and_the_run_goes_on(self):
         result = self.solve(extra={"STUB_FAIL": "ideate-b"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("the ideate-b step failed; see", result.stderr)
-        self.assertIn("ideate-b.log", result.stderr)
-        self.assertEqual(self.roles(), ["plan", "ideate-a", "ideate-b"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"== ideate-b: failed in \d+s \(pi exited with status 3; see .*03-ideate-b.log\) -> solve")
+        self.assertEqual(self.roles(), FIRST)
+        (logs,) = (self.problem / "workflow-logs").iterdir()
+        self.assertIn("3\tideate-b\tfailed\tsolve\t", (logs / "trace.tsv").read_text())
 
-    def test_a_step_that_hangs_is_stopped(self):
-        result = self.solve(extra={"STUB_HANG": "solve", "TEAM_SOLVE_TIMEOUT": "1"})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no answer within 1s", result.stdout)
-        self.assertIn("the solve step did not finish", result.stderr)
+    def test_a_failing_planner_stops_the_run_and_names_its_log(self):
+        result = self.solve(extra={"STUB_FAIL": "plan"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("plan: pi exited with status 3; see", result.stderr)
+        self.assertIn("01-plan.log", result.stderr)
+        self.assertEqual(self.roles(), ["plan"])
+
+    def test_a_solver_that_hangs_is_stopped_and_the_check_decides(self):
+        result = self.solve(extra={"STUB_HANG": "solve", "WORKFLOW_TIMEOUT": "1"})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("== solve: failed", result.stdout)
+        self.assertIn("pi gave no answer within 1s", result.stdout)
+        self.assertIn("== unsolved: failure", result.stdout)
 
     def test_other_agents(self):
         for agent in ("opencode", "codex"):
             with self.subTest(agent):
                 for name in ("roles", "pi", "opencode", "codex"):
                     (self.box.calls / name).unlink(missing_ok=True)
-                result = self.solve(extra={"TEAM_SOLVE_AGENT": agent})
+                result = self.solve(extra={"WORKFLOW_AGENT": agent})
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(len(self.runs_of(agent)), len(ROLES))
-                self.assertEqual(self.roles(), ROLES)
+                self.assertEqual(len(self.runs_of(agent)), len(FIRST))
+                self.assertEqual(self.roles(), FIRST)
                 self.assertEqual(self.box.called("pi"), [])
 
     def test_temporary_data_is_removed(self):
         self.solve()
         self.solve(extra={"STUB_FAIL": "plan"})
-        self.assertEqual(list(self.box.dir.glob("puny-team-solve.*")), [])
+        self.assertEqual(list(self.box.dir.glob("puny-workflow.*")), [])
 
     def test_bad_input(self):
         empty = self.box.work / "empty"
         empty.mkdir()
-        (self.box.work / "no-tests").mkdir()
-        (self.box.work / "no-tests" / "task.md").write_text("x\n")
+        (self.box.work / "no-goal").mkdir()
+        (self.box.work / "no-goal" / "task.md").write_text("x\n")
         (self.problem / "tests" / "3.in").write_text("1 1\n")
         cases = [
             ((str(empty),), {}, "task.md is missing"),
-            ((str(self.box.work / "no-tests"),), {}, "holds no samples"),
+            ((str(self.box.work / "no-goal"),), {}, "has no goal to check"),
             ((str(self.problem),), {}, "3.out is missing"),
             ((str(self.box.work / "nowhere"),), {}, "is not a folder"),
             ((str(self.problem), "extra"), {}, "usage:"),
@@ -184,8 +205,8 @@ class TeamSolveTest(ServerCase):
                 self.assertIn(message, result.stderr)
         (self.problem / "tests" / "3.in").unlink()
         for extra, message in (
-            ({"TEAM_SOLVE_AGENT": "claude"}, "TEAM_SOLVE_AGENT must be one of"),
-            ({"TEAM_SOLVE_TIMEOUT": "0"}, "TEAM_SOLVE_TIMEOUT must be a positive whole number"),
+            ({"WORKFLOW_AGENT": "claude"}, "WORKFLOW_AGENT must be one of"),
+            ({"WORKFLOW_TIMEOUT": "0"}, "WORKFLOW_TIMEOUT must be a positive whole number"),
         ):
             with self.subTest(message):
                 self.assertIn(message, self.solve(extra=extra).stderr)
@@ -201,7 +222,7 @@ class TeamSolveTest(ServerCase):
 
 
 class TeamSolveSettingsTest(unittest.TestCase):
-    """./bin/config checks the team-solve settings as ./bin/team-solve does."""
+    """./bin/config checks the workflow settings as ./bin/workflow does."""
 
     def setUp(self):
         from helpers import Sandbox
@@ -209,8 +230,8 @@ class TeamSolveSettingsTest(unittest.TestCase):
         self.addCleanup(self.box.cleanup)
 
     def test_bad_values_are_never_saved(self):
-        for pair, message in (("TEAM_SOLVE_AGENT=claude", "TEAM_SOLVE_AGENT must be one of"),
-                              ("TEAM_SOLVE_TIMEOUT=soon", "TEAM_SOLVE_TIMEOUT must be a positive whole number")):
+        for pair, message in (("WORKFLOW_AGENT=claude", "WORKFLOW_AGENT must be one of"),
+                              ("WORKFLOW_TIMEOUT=soon", "WORKFLOW_TIMEOUT must be a positive whole number")):
             with self.subTest(pair):
                 result = self.box.run(["bin/config", "set", pair])
                 self.assertNotEqual(result.returncode, 0)
@@ -218,15 +239,15 @@ class TeamSolveSettingsTest(unittest.TestCase):
                 self.assertFalse((self.box.root / "puny.conf").exists())
 
     def test_good_values_are_saved_and_shown(self):
-        result = self.box.run(["bin/config", "set", "TEAM_SOLVE_AGENT=opencode", "TEAM_SOLVE_TIMEOUT=120"])
+        result = self.box.run(["bin/config", "set", "WORKFLOW_AGENT=opencode", "WORKFLOW_TIMEOUT=120"])
         self.assertEqual(result.returncode, 0, result.stderr)
         shown = self.box.run(["bin/config"]).stdout
-        self.assertRegex(shown, r"TEAM_SOLVE_AGENT\s+puny.conf\s+opencode")
-        self.assertRegex(shown, r"TEAM_SOLVE_TIMEOUT\s+puny.conf\s+120")
-        self.assertRegex(self.box.run(["bin/config"], extra_env={"TEAM_SOLVE_AGENT": "pi"}).stdout, r"TEAM_SOLVE_AGENT\s+environment\s+pi")
+        self.assertRegex(shown, r"WORKFLOW_AGENT\s+puny.conf\s+opencode")
+        self.assertRegex(shown, r"WORKFLOW_TIMEOUT\s+puny.conf\s+120")
+        self.assertRegex(self.box.run(["bin/config"], extra_env={"WORKFLOW_AGENT": "pi"}).stdout, r"WORKFLOW_AGENT\s+environment\s+pi")
 
 
-class CheckSamplesTest(unittest.TestCase):
+class RunChecksTest(unittest.TestCase):
     def setUp(self):
         import tempfile
         self.dir = Path(tempfile.mkdtemp(prefix="puny-check-")).resolve()
@@ -237,12 +258,13 @@ class CheckSamplesTest(unittest.TestCase):
 
     def check(self):
         return subprocess.run(
-            ["/bin/bash", str(REPO / "workflows" / "team-solve" / "check-samples.sh")],
+            ["/bin/bash", str(REPO / "workflows" / "team-solve" / "run-checks.sh")],
             cwd=self.dir, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}, timeout=60,
         )
 
     def test_pass_and_fail(self):
         (self.dir / "solution.py").write_text(GOOD)
+        (self.dir / "run.sh").write_text("python3 solution.py\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("PASS tests/1.in", result.stdout)
@@ -251,22 +273,37 @@ class CheckSamplesTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("FAIL tests/1.in: output differs", result.stdout)
 
-    def test_a_crashing_solution(self):
-        (self.dir / "solution.py").write_text("raise SystemExit(2)\n")
+    def test_a_crashing_program(self):
+        (self.dir / "run.sh").write_text("exit 2\n")
         result = self.check()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("solution exited unsuccessfully", result.stdout)
+        self.assertIn("run.sh exited unsuccessfully", result.stdout)
+
+    def test_check_sh_alone_and_with_samples(self):
+        (self.dir / "run.sh").write_text("echo 5\n")
+        (self.dir / "check.sh").write_text("test -f run.sh\n")
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("PASS check.sh", result.stdout)
+        (self.dir / "check.sh").write_text("exit 1\n")
+        self.assertEqual(self.check().returncode, 1)
+        for path in (self.dir / "tests").iterdir():
+            path.unlink()
+        (self.dir / "check.sh").write_text("true\n")
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("Samples:", result.stdout)
 
     def test_missing_pieces(self):
-        self.assertIn("there is no solution.py", self.check().stdout)
-        (self.dir / "solution.py").write_text(GOOD)
+        self.assertIn("there is no run.sh", self.check().stdout)
+        (self.dir / "run.sh").write_text("echo 5\n")
         (self.dir / "tests" / "2.in").write_text("1 1\n")
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing tests/2.out", result.stdout)
         for path in (self.dir / "tests").iterdir():
             path.unlink()
-        self.assertIn("no sample inputs found", self.check().stdout)
+        self.assertIn("no goal to check", self.check().stdout)
 
     def test_the_example_problem_is_solvable(self):
         example = REPO / "workflows" / "team-solve" / "example"
@@ -285,6 +322,7 @@ class CheckSamplesTest(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(path.read_text())
         (self.dir / "solution.py").write_text(solution)
+        (self.dir / "run.sh").write_text("python3 solution.py\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("Samples: 3; failures: 0", result.stdout)

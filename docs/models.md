@@ -1,12 +1,12 @@
 # Models, memory and benchmarks
 
-Why the default model is KAT-Coder, how `./bin/serve-qwen` decides whether a model fits, and how the candidates compared. Settings named here are described in the [README](../README.md#settings). To look for other models yourself, use `./bin/models` or `./bin/web-ui` ([README](../README.md#finding-and-serving-other-models)); they run the same memory estimate as the server.
+Why the default model is KAT-Coder, how the server decides whether a model fits, the presets, and how models are benchmarked. `./bin/models info` runs the same memory estimate as the server for any model.
 
 ## Memory budget
 
 macOS lets the GPU use at most 16 GiB on this 24 GiB machine (`max_recommended_working_set_size` from `mlx.core.device_info()`). Raising that needs `sudo sysctl iogpu.wired_limit_mb`, which this setup avoids.
 
-That rules out the model the [original guide](compatibility.md#differences-from-the-original-guide) assumed. [`mlx-community/Qwen3.6-35B-A3B-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit/tree/38740b847e4cb78f352aba30aa41c76e08e6eb46) weighs 19.0 GiB and the [mxfp4 build](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-mxfp4/tree/833013b27a1f7c6dbb008b55d37c387ea22ea89d) 18.0 GiB, both over the limit before any context. The default here is [`mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B`](https://huggingface.co/mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B/tree/b33dfde62c2753841aa2b1662529bf7f3b1fdde5), pinned to commit `b33dfde6`:
+That rules out the unpruned Qwen3.6-35B-A3B. [`mlx-community/Qwen3.6-35B-A3B-4bit`](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit/tree/38740b847e4cb78f352aba30aa41c76e08e6eb46) weighs 19.0 GiB and the [mxfp4 build](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-mxfp4/tree/833013b27a1f7c6dbb008b55d37c387ea22ea89d) 18.0 GiB, both over the limit before any context. The default here is [`mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B`](https://huggingface.co/mlx-community/KAT-Coder-V2.5-Dev-OptiQ-4bit-REAP-18B/tree/b33dfde62c2753841aa2b1662529bf7f3b1fdde5), pinned to commit `b33dfde6`:
 
 - It is [Kwaipilot's KAT-Coder-V2.5-Dev](https://huggingface.co/Kwaipilot/KAT-Coder-V2.5-Dev/blob/7be56fe773e72b6f5ca93c1ae45d828ddb893922/README.md), Qwen3.6-35B-A3B further trained for coding agents, scoring 69.4 on SWE-bench Verified against 64.4 for Qwen3.6-35B-A3B in Kwaipilot's runs. Both cards declare Apache-2.0.
 - Half of the 256 experts in each layer are pruned, leaving 128; each token still uses 8. mlx-lm loads 11.4 GiB, which is also the whole download. Its model card says this pruned build was not benchmarked on its own; the same recipe applied to Qwen3.6-35B-A3B cost 21.4 points of MMLU and left coding and tool use about level (HumanEval -1.3, BFCL -1.0).
@@ -39,7 +39,16 @@ A request of N tokens needs:
 
 mlx-lm computes attention with an 8-bit cache without the fused kernel, so it holds the full score matrix of one step, 2 bytes for each of the 16 query heads, step token and context token ([`base.py`](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/base.py)). At 262,144 tokens and this setup's default 512-token step, that alone is 4 GiB per copy, which is why the step shrinks for long prompts.
 
-The constants in [`lib/memory.py`](../lib/memory.py) come from measuring prefill peaks on 2026-10-22: with Qwen3.5-4B at 16K to 64K tokens and steps of 32 to 512, the peak above the weights was the context cache, 1.9 to 2.1 copies of the scores, and at most 0.71 GiB more; KAT-Coder at 8K tokens needed 0.26 GiB more. The estimate rounds these up to 2.25 copies and 0.75 GiB. In an end-to-end check with Qwen3.5-4B and a 40,000-token prompt, the server's peak physical footprint (`vmmap --summary`) was 5.2 GiB, below the estimate. Steps of 32 tokens took 14% longer than 512 at 32K tokens. Beyond 64K tokens, the per-request peaks `./bin/verify` logs were measured on 2026-11-02 with Qwen3.5-4B: 2.61 GiB above the weights against an estimate of 3.62 GiB for a 72,376-token request at a step of 256, and 3.74 GiB against 4.72 GiB for a 136,576-token request at a step of 128. With 5 GiB free, the guard chose that step of 128, and reading the 128K prompt took about 7 minutes. Larger requests have not been measured; the estimate there extrapolates the same terms.
+The constants in [`lib/memory.py`](../lib/memory.py) come from prefill peaks measured on 2026-10-22 with Qwen3.5-4B at 16K to 64K tokens and steps of 32 to 512: the context cache, 1.9 to 2.1 copies of the scores, and at most 0.71 GiB more (0.26 GiB for KAT-Coder at 8K). The estimate rounds these up to 2.25 copies and 0.75 GiB. Steps of 32 tokens took 14% longer than 512 at 32K tokens.
+
+The server logs every request's peak against its estimate. Measured that way on 2026-11-02 with Qwen3.5-4B:
+
+| Request | Prefill step | Peak above the weights | Estimate |
+|---|---|---|---|
+| 72,376 tokens | 256 | 2.61 GiB | 3.62 GiB |
+| 136,576 tokens | 128 | 3.74 GiB | 4.72 GiB |
+
+With 5 GiB free the guard chose the step of 128, and reading that prompt took about 7 minutes. Larger requests are not measured; the estimate extrapolates the same terms.
 
 What the server needs on a 24 GiB Mac, with an 8-bit context cache and no cached prompts:
 
@@ -49,7 +58,7 @@ What the server needs on a 24 GiB Mac, with an 8-bit context cache and no cached
 | Pruned Qwen3.6 (`reap`) | 13.50 GiB | 14.65 GiB | 16.25 GiB | 241,884 tokens | 14.50 GiB | 17.00 GiB |
 | Qwen3.5-4B (`small`) | 5.09 GiB | 6.91 GiB | 9.44 GiB | 262,144 tokens | 6.09 GiB | 10.44 GiB |
 
-KAT-Coder starts once 14.43 GiB is free, enough for 32,768 tokens; longer conversations then work as far as free memory allows. Its full 262,144-token window needs 16.18 GiB, just over what the GPU may use, so the server tells the agents its window is 247,319 tokens, and they compact their conversations before reaching it. A request longer than that is refused with an error rather than risk running out of memory. The GPU limit is the one this Mac reports, 16 GiB plus 16 KiB. On a 24 GiB Mac, freeing 14 to 17 GiB usually means closing browsers and chat apps first.
+KAT-Coder starts once 14.43 GiB is free, enough for 32,768 tokens; longer conversations work as far as free memory allows. Its full window needs 16.18 GiB, just over the GPU limit, so the server tells the agents 247,319 tokens and they compact their conversations before reaching it. On a 24 GiB Mac, freeing 14 to 17 GiB usually means closing browsers and chat apps.
 
 ## Sampling
 
@@ -63,7 +72,7 @@ The server samples with `top_p=0.95` and `min_p=0.0`, and with each preset's tem
 
 ## Presets for larger Macs
 
-A Mac with more memory lets the GPU use more, and can run a larger model with the same guards. Seven presets are for that; choose one with `QWEN_PRESET` and download it with `./bin/setup` followed by its name. The first five are in the same families as the default, with the same hybrid of full and linear attention that the memory estimate was measured on; Muse Glimmer is described [below](#muse-glimmer). They were picked on 2026-11-01 from the MLX builds `./bin/models info` reports as runnable by mlx-lm 0.32.2 with a tool-call parser, and they have not been run here: this Mac's GPU may use only 16 GiB. [Checking a preset on another Mac](#checking-a-preset-on-another-mac) says how to test one.
+A Mac with more memory lets the GPU use more. Seven presets are for that: choose one with `QWEN_PRESET` and install it with `./bin/setup NAME`. They were picked on 2026-11-01 from the MLX builds mlx-lm 0.32.2 can run with a tool-call parser, and have not been run here, where the GPU may use only 16 GiB; [checking a preset on another Mac](#checking-a-preset-on-another-mac) says how to test one.
 
 | Preset | Model and commit | Weights | GPU limit for 32,768 tokens | For 131,072 | For the full 262,144 | Free memory needed to start |
 |---|---|---|---|---|---|---|
@@ -75,9 +84,9 @@ A Mac with more memory lets the GPU use more, and can run a larger model with th
 | `glimmer-4` | [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit/tree/3e7677d7a40d348a3daba263a2b1c0aa41910710) `3e7677d7` | 14.59 GiB | 16.52 GiB | 17.38 GiB, its full window | — | 17.52 GiB |
 | `glimmer` | [`mlx-community/Muse-Glimmer-30B-8bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-8bit/tree/679c45e1b331a6514a6e38076a353cc5fed21bf6) `679c45e1` | 27.56 GiB | 29.49 GiB | 30.35 GiB, its full window | — | 30.49 GiB |
 
-The figures come from `lib/memory.py` with the default settings: an 8-bit context cache, no cached prompts and a 512 MiB margin. Glimmer's files also hold its image encoder, 3.49 GiB at 4 bits and 3.52 GiB at 8, which mlx-lm's text-only Glimmer drops before loading ([`sanitize`](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/muse_glimmer.py#L245-L250)). So `lib/memory.py` leaves those tensors out, sized from each file's safetensors header, and `./bin/models info` reads the same headers with range requests before downloading; the weights column is what is loaded, against 18.08 and 31.08 GiB of files. Measured from the headers on 2026-11-02. A preset whose full window does not fit still starts, tells the agents the window that does, and refuses longer requests, as `kat` does here.
+The figures come from `lib/memory.py` with the default settings. Glimmer's files also hold an image encoder, about 3.5 GiB, which mlx-lm drops before loading ([`sanitize`](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/muse_glimmer.py#L245-L250)), so its weights column is what is loaded, sized from the safetensors headers, against 18.08 and 31.08 GiB of files. A preset whose full window does not fit still starts with the window that does, as `kat` does here.
 
-What the GPU may use depends on the Mac. macOS reports it as `max_recommended_working_set_size`, which `./bin/models info` and `./bin/serve-qwen` read; this 24 GiB Mac reports 16 GiB. Apple does not document the default for other sizes. Community measurements put it at about three quarters of the memory on larger Macs, for example about 48 GiB on a 64 GiB Mac ([contracollective.com](https://contracollective.com/blog/mac-unified-memory-wired-limit-gpu-large-local-llm-2026), [ivanopcode/devnote-override-macos-metal-vram-cap](https://github.com/ivanopcode/devnote-override-macos-metal-vram-cap)). Run `./bin/models info` with a preset's model on the Mac in question to see what fits there.
+The GPU limit depends on the Mac; macOS reports it as `max_recommended_working_set_size`. Apple does not document it, but community measurements put it at about three quarters of the memory on larger Macs, such as 48 GiB of 64 ([contracollective.com](https://contracollective.com/blog/mac-unified-memory-wired-limit-gpu-large-local-llm-2026), [ivanopcode/devnote-override-macos-metal-vram-cap](https://github.com/ivanopcode/devnote-override-macos-metal-vram-cap)). `./bin/models info` on that Mac shows what fits.
 
 What each model is:
 
@@ -87,7 +96,12 @@ What each model is:
 
 - **`glimmer-4`** and **`glimmer`**: Meta's Muse Glimmer at 4 and 8 bits, a dense 30-billion-parameter model from August 2026 made for agents running on one machine ([card](https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/README.md), [Meta's page](https://dev.meta.ai/lp/muse-glimmer)). On Meta's table it trails Qwen3.6-27B on coding, 76.0 against 77.2 on SWE-bench Verified and 51.7 against 60.7 on Terminal-Bench 2.1, and leads it on SWE-bench Pro, 51.2 against 50.2, and on tool use, 75.5 against 62.5 on MCP Atlas. Qwen3.8-27B's card gives 73.0 on Terminal-Bench 2.1 and 61.7 on SWE-bench Pro, but with its own harnesses: Meta's table puts Qwen3.6-27B at 60.7 on Terminal-Bench 2.1 where Qwen's puts it at 63.4, so the two cards do not compare directly. Its window is 131,072 tokens. Apache-2.0, and Meta's [usage policy](https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/USAGE_POLICY.md) applies too: it lists prohibited uses and says the model is not meant for anyone under 18. The MLX builds leave that file out.
 
-Not picked: Qwen3.6-27B, which Qwen3.8-27B replaces at the same size. Qwen3.6-35B-A3B at 8 bits (35.13 GiB), the unpruned model that `reap` is pruned from, because Qwen3.8-27B scores higher on Qwen's tables and downloads less. Qwen3.8-Flash-Next (103.86 GiB at 4 bits), whose architecture, `qwen4_exp`, is not in mlx-lm 0.32.2 and whose card states an `other` license; Qwen3.8-2.4T-A95B, far beyond any Mac. gpt-oss-120b has no tool-call parser in mlx-lm 0.32.2. MiniMax-M2.5 at 4 bits loads 119.83 GiB, more than a 128 GiB Mac's GPU may use. GLM-4.7-Flash uses an attention layout the memory estimate does not model, and GLM-5.3-Flash's architecture is not in mlx-lm 0.32.2. Muse Glimmer at 6 bits (24.58 GiB): the 4- and 8-bit builds bracket it, as for the other families.
+Not picked:
+
+- Qwen3.6-27B, which Qwen3.8-27B replaces, and Qwen3.6-35B-A3B at 8 bits (35.13 GiB), which scores lower than Qwen3.8-27B and downloads more.
+- Qwen3.8-Flash-Next and GLM-5.3-Flash, whose architectures mlx-lm 0.32.2 lacks; gpt-oss-120b, which has no tool-call parser there.
+- MiniMax-M2.5 (119.83 GiB at 4 bits), beyond a 128 GiB Mac's GPU limit, and GLM-4.7-Flash, whose attention layout the memory estimate does not model.
+- Muse Glimmer at 6 bits, which the 4- and 8-bit builds bracket.
 
 ### Checking a preset on another Mac
 
@@ -98,14 +112,14 @@ On the Mac in question, with this repo, `./bin/setup mlx opencode pi` done and C
 ./bin/verify qwen38-4
 ```
 
-`./bin/verify` downloads the preset if needed, starts its own server (stop any other one first), runs `./bin/smoke-test`, `./bin/evals` and `./bin/bench-agents` with OpenCode, Pi and, when installed, Codex, then stops the server. A failed step does not stop the next one. With every step at its defaults it takes hours; `VERIFY_STEPS="smoke evals"` leaves out the benchmark, and the `EVAL_*` and `BENCH_*` settings apply as usual. Its report, `state/verify/PRESET-TIME/report.md`, gives:
+`./bin/verify` downloads the preset if needed, starts its own server (stop any other first), runs the smoke test, the evals and the benchmark with OpenCode, Pi and, when installed, Codex, and stops the server. A failed step does not stop the next. At the defaults it takes hours; `VERIFY_STEPS="smoke evals"` leaves out the benchmark, and the `EVAL_*` and `BENCH_*` settings apply. Its report, `state/verify/PRESET-TIME/report.md`, gives:
 
-- the chip, the memory, the GPU limit macOS reports and the macOS version, but not the Mac's name or serial number;
-- the model and commit, the settings, the mlx-lm environment and the agents' versions;
-- each step's result and time, the evals and benchmark results;
-- the server's memory check, and how each request's peak compared with the estimate the memory guard admitted it on. A peak over its estimate means the guard was too optimistic on that Mac, and is worth reporting with `serve.log`, which sits next to the report.
+- the chip, memory, GPU limit and macOS version, but not the Mac's name or serial number;
+- the model, settings and versions;
+- each step's result and time, and the evals and benchmark results;
+- each request's memory peak against the estimate it was admitted on. A peak over its estimate is worth reporting with the `serve.log` beside the report.
 
-The evals and benchmark results are also kept under the label `PRESET-TIME`, so `./bin/evals report` and `./bin/bench-agents report` show them next to the ones from this Mac. The same works for `kat` with Codex, which was not benchmarked here for lack of free memory.
+The results are also kept under the label `PRESET-TIME` for `./bin/evals report` and `./bin/bench-agents report`.
 
 ### Muse Glimmer
 
@@ -120,7 +134,7 @@ The MLX builds' chat template predates [a fix Meta made on 2026-08-11](https://h
 
 ## Other models that fit
 
-A survey on 2026-10-20 of MLX models whose loaded weights stay under 11.5 GiB, that mlx-lm 0.32.2 can run, and whose tool calls it can parse. The pruned Qwen3.6 model was the previous default and is benchmarked below; the other two have not been tried. Download any of them with `./bin/models download`, and serve it with `QWEN_REPO`, `QWEN_REVISION` and `QWEN_CONTEXT`. Benchmark numbers are for the full-precision parent models, not these quantized builds. For servers that run models faster than plain mlx-lm, see [alternatives.md](alternatives.md).
+A survey on 2026-10-20 of MLX models under 11.5 GiB loaded that mlx-lm 0.32.2 can run with a tool-call parser. The first is the `reap` preset, benchmarked below; the other two have not been tried. Scores are the full-precision parents'.
 
 | Model and commit | Loaded weights | Context cache per token | Parent's coding-agent scores | Caveat |
 |---|---|---|---|---|
@@ -128,7 +142,7 @@ A survey on 2026-10-20 of MLX models whose loaded weights stay under 11.5 GiB, t
 | [`NexVeridian/Qwen3.6-27B-3bit`](https://huggingface.co/NexVeridian/Qwen3.6-27B-3bit/tree/01947930271046ebd8ef96663618cf7407158874) `01947930` | 10.96 GiB | 64 KiB | SWE-bench Verified 77.2, Terminal-Bench 2.0 59.3 ([Qwen card](https://huggingface.co/Qwen/Qwen3.6-27B/blob/6a9e13bd6fc8f0983b9b99948120bc37f49c13e9/README.md)) | Strongest parent; 3-bit quality is unmeasured, and a dense model decodes much slower |
 | [`mlx-community/Qwen3.5-9B-6bit`](https://huggingface.co/mlx-community/Qwen3.5-9B-6bit/tree/76fe4065e622cf34990d3c13ef80ec8531c9a0f7) `76fe4065` | 7.63 GiB | 32 KiB | BFCL-V4 66.1, TAU2-Bench 79.1 ([Qwen card](https://huggingface.co/Qwen/Qwen3.5-9B/blob/c202236235762e1c871ad0ccb60c8ee5ba337b9a/README.md)) | Weakest of the three, but leaves the most room for long context |
 
-Qwen's 73.4 and Kwaipilot's 64.4 for the same Qwen3.6-35B-A3B come from different harnesses; Kwaipilot's card attributes the gap to harness versions.
+Qwen's 73.4 and Kwaipilot's 64.4 for the same Qwen3.6-35B-A3B come from different harnesses.
 
 ## Comparing models
 
@@ -145,9 +159,7 @@ Four are harder, each with several things to get right at once:
 - `notes`: move a notes file from format version 1 to version 2, with stable ids, while still reading version 1, and add a `migrate` command that keeps a backup, has a dry run, does nothing twice, and changes nothing when one note is bad.
 - `templ`: build a template language from its `SPEC.md`: values, filters, conditions, loops, comments, whitespace control, HTML escaping, and errors that name their line.
 
-Each run works on a fresh copy. When the agent finishes, tests it never saw (`bench/TASK/hidden`) are copied in, and the whole suite plus the task's `check` script decide pass or fail. Results go to `state/bench/LABEL/`, with each run's log and final files. `./bin/bench-agents report` summarizes every label side by side.
-
-Serve one model, run `BENCH_RUNS=2 ./bin/bench-agents first-model`, stop the server, serve the next model and repeat with another label. Sampling is random, so one run per task says little. These settings shape a run:
+Each run works on a fresh copy. When the agent finishes, hidden tests from `bench/TASK/hidden` are copied in, and they with the task's `check` script decide pass or fail. Results go to `state/bench/LABEL/`; `./bin/bench-agents report` puts labels side by side. To compare models, serve each in turn and run `BENCH_RUNS=2 ./bin/bench-agents LABEL` with a label per model. Settings:
 
 - `BENCH_RUNS`: runs of each task with each agent, 1 by default; use two or more.
 - `BENCH_AGENTS`: the agents to run, `opencode pi` by default; `codex` works too.
@@ -198,7 +210,7 @@ Results of `BENCH_RUNS=2 ./bin/bench-agents` on 2026-10-20 and 2026-10-21, 32K c
 
 KAT-Coder needs fewer model requests than REAP for the same work, so it settles on an answer in fewer turns. Its one failure at 0.6 made `compute_tax` work for `Decimal("20")` but crash on a plain `20`, because `20 / 100` is a float. Twelve runs per setting are too few to separate the three on correctness; KAT-Coder is clearly faster than REAP, and 0.6 against 0.8 is within noise.
 
-The two runs at 0.6 used mlx-lm's 2048-token prefill step and up to 10 cached prompts; the 0.8 run used 512-token steps with the prompt cache off. Neither changes the work the model does: the cache never hits in agent loops (see below), and the prefill step changed memory but not speed.
+The runs at 0.6 used a 2048-token prefill step and up to 10 cached prompts, the 0.8 run 512-token steps and no cache; neither changes the model's work, since the cache never hits in agent loops (below).
 
 ## Agents get no help from the prompt cache
 

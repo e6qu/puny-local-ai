@@ -1,0 +1,34 @@
+// team-solve: a planner, two ideators and a solver, then a loop of check,
+// review and repair until the folder's goal check passes. An ideator, the
+// solver, a reviewer or a repair that goes wrong is noted and the run goes on,
+// since the goal check decides in the end; only the planner is essential. Adapted from
+// Memdoor's team-solve (Apache-2.0); see NOTICE and CHANGES.md.
+{
+  "description": "Plan, two ideas, solve, then check, review and repair until the goal check passes",
+  "needs": ["task.md"],
+  "start": "plan",
+  "max_steps": 16,
+  "states": {
+    "plan": { "agent": "plan.md", "writes": ["plan.md", "notes.md"], "next": "ideate-a" },
+    "ideate-a": { "agent": "ideate-a.md", "writes": ["notes.md"], "next": "ideate-b", "failed": "ideate-b" },
+    "ideate-b": { "agent": "ideate-b.md", "writes": ["notes.md"], "next": "solve", "failed": "solve" },
+    "solve": { "agent": "solve.md", "next": "check", "failed": "check" },
+    "check": {
+      "command": "bash {{graph}}/run-checks.sh",
+      "output": "check-output.log",
+      "pass": "solved",
+      "fail": "review"
+    },
+    "review": {
+      "agent": "review.md",
+      "writes": ["review.md"],
+      "next": "repair",
+      "failed": "repair",
+      "max_visits": 3,
+      "exhausted": "unsolved"
+    },
+    "repair": { "agent": "repair.md", "next": "check", "failed": "check" },
+    "solved": { "end": "success" },
+    "unsolved": { "end": "failure" }
+  }
+}

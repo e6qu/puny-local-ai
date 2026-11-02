@@ -1,102 +1,31 @@
 #!/usr/bin/env bash
-# Solves a programming problem with a team of fresh agent runs, the method of
-# GVS5H as written up in Memdoor's team-solve workflow: a planner, two
-# ideators, a solver, a sample test, a reviewer, one repair, and a final
-# strict test that alone decides success. Every agent run starts from a fresh
-# context and talks to the others only through files in the problem folder.
-# The prompts are in workflows/team-solve/ (Apache-2.0, adapted; see its
-# NOTICE and CHANGES.md).
+# Has a team of fresh agent runs build what FOLDER/task.md asks for, until the
+# folder's goal check passes: the method of GVS5H as written up in Memdoor's
+# team-solve workflow, run as the workflow in workflows/team-solve/ (see
+# ./bin/workflow check team-solve).
 #
-#   ./bin/team-solve [FOLDER]   FOLDER holds task.md and samples tests/N.in
-#                               with tests/N.out; default: the current folder
+#   ./bin/team-solve [FOLDER]   default: the current folder
 #
-# The team writes plan.md, notes.md, solution.py, review.md and the test logs
-# into FOLDER, and each agent run's log into FOLDER/team-solve-logs/RUN/.
-# solution.py must read stdin and print the answer; the samples are compared
-# with diff. It needs the server from ./bin/serve-qwen.
-#
-# Settings:
-#   TEAM_SOLVE_AGENT    the agent every step runs: pi (default), opencode or codex
-#   TEAM_SOLVE_TIMEOUT  seconds per agent step, default 600
+# FOLDER holds task.md and its goal: samples tests/N.in with tests/N.out
+# (the team writes run.sh, the command that runs its program on a sample),
+# check.sh (any command that exits 0 when the task is done), or both. The
+# result can be any files in any language. It needs the server from
+# ./bin/serve-qwen; WORKFLOW_AGENT and WORKFLOW_TIMEOUT apply.
 
 set -euo pipefail
 # Resolves symlinks, so the command also works when linked from elsewhere.
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
-source "$PUNY_ROOT/lib/agents.sh"
 
 [[ $# -le 1 ]] || die "usage: $PUNY_ROOT/bin/team-solve [FOLDER]"
 [[ -d "${1:-.}" ]] || die "${1:-.} is not a folder"
 folder="$(cd "${1:-.}" && pwd)"
-[[ -f "$folder/task.md" ]] || die "$folder/task.md is missing: write the problem there"
+[[ -f "$folder/task.md" ]] || die "$folder/task.md is missing: write the task there"
 shopt -s nullglob
 inputs=("$folder"/tests/*.in)
 shopt -u nullglob
-[[ ${#inputs[@]} -gt 0 ]] || die "$folder/tests/ holds no samples: add tests/1.in with its tests/1.out"
-for input in "${inputs[@]}"; do
+[[ ${#inputs[@]} -gt 0 || -f "$folder/check.sh" ]] \
+  || die "$folder has no goal to check: add samples tests/1.in with tests/1.out, or check.sh"
+for input in ${inputs[@]+"${inputs[@]}"}; do
   [[ -f "${input%.in}.out" ]] || die "${input%.in}.out is missing: every sample input needs its expected output"
 done
-
-resolve_team_solve_settings
-agent="$TEAM_SOLVE_AGENT"
-require_mlx_server
-
-workflow="$PUNY_ROOT/workflows/team-solve"
-run="$(date +%Y%m%d-%H%M%S)"
-logs="$folder/team-solve-logs/$run"
-mkdir -p "$logs"
-# OpenCode's private data for each step, so no run sees another's session.
-data="$(mktemp -d "${TMPDIR:-/tmp}/puny-team-solve.XXXXXX")"
-trap 'rm -rf "$data"' EXIT
-
-echo "team-solve $run with $agent in $folder"
-
-# step NAME runs the agent on workflow/NAME.md in a fresh context.
-step() {
-  local name="$1" prompt status=0 started=$SECONDS
-  prompt="$(<"$workflow/$name.md")"
-  prompt="${prompt//\{\{run\}\}/$run}"
-  printf '== %s: ' "$name"
-  (cd "$folder" && run_agent "$agent" "$data/$name" "$TEAM_SOLVE_TIMEOUT" "$prompt") \
-    > "$logs/$name.log" 2>&1 || status=$?
-  if [[ $status -eq 142 ]]; then
-    echo "no answer within ${TEAM_SOLVE_TIMEOUT}s"
-    die "the $name step did not finish; see $logs/$name.log"
-  elif [[ $status -ne 0 ]]; then
-    echo "the agent exited with status $status"
-    die "the $name step failed; see $logs/$name.log"
-  fi
-  echo "done in $((SECONDS - started))s"
-}
-
-# check LOG runs the samples, writing what they print to LOG, and returns
-# their status.
-check() {
-  local status=0
-  (cd "$folder" && bash "$workflow/check-samples.sh") > "$folder/$1" 2>&1 || status=$?
-  return "$status"
-}
-
-step plan
-for file in plan.md notes.md; do
-  [[ -f "$folder/$file" ]] || die "the planner wrote no $file; see $logs/plan.log"
-done
-step ideate-a
-step ideate-b
-step solve
-[[ -f "$folder/solution.py" ]] || die "the solver wrote no solution.py; see $logs/solve.log"
-
-status=0
-check test-output.log || status=$?
-echo "$status" > "$folder/test-status.txt"
-echo "== test: $(tail -n 1 "$folder/test-output.log") (status $status)"
-
-step review
-step repair
-
-status=0
-check final-test-output.log || status=$?
-echo "== verify: $(tail -n 1 "$folder/final-test-output.log")"
-if [[ $status -ne 0 ]]; then
-  die "solution.py fails the samples; see $folder/final-test-output.log and $folder/notes.md"
-fi
-echo "Solved: $folder/solution.py passes every sample."
+exec "$PUNY_ROOT/bin/workflow" team-solve "$folder"

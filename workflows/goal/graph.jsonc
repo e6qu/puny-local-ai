@@ -1,0 +1,27 @@
+// goal: check, and while the check fails, one fresh worker takes one step
+// toward the goal and notes it in progress.md for the next. Each worker sees
+// only the goal, the recent progress notes and the end of the check's output,
+// so a small model with a short context can keep going.
+{
+  "description": "Work in short fresh steps until check.sh passes, at most 8 steps",
+  "needs": ["goal.md", "check.sh"],
+  "start": "check",
+  "max_steps": 20,
+  "states": {
+    "check": {
+      "command": "bash check.sh",
+      "output": "check-output.log",
+      "pass": "done",
+      "fail": "work"
+    },
+    "work": {
+      "agent": "work.md",
+      "writes": ["progress.md"],
+      "next": "check",
+      "max_visits": 8,
+      "exhausted": "gave-up"
+    },
+    "done": { "end": "success" },
+    "gave-up": { "end": "failure" }
+  }
+}

@@ -53,6 +53,7 @@ func (a *App) routes() {
 
 	m.HandleFunc("GET /workflows", a.workflowsPage)
 	m.HandleFunc("POST /workflows/team-solve", a.startTeamSolve)
+	m.HandleFunc("POST /workflows/goal", a.startGoal)
 	m.HandleFunc("GET /benchmarks", a.benchmarksPage)
 	m.HandleFunc("POST /benchmarks/agents", a.startBench)
 	m.HandleFunc("POST /benchmarks/evals", a.startEvals)
@@ -415,13 +416,16 @@ type JobPage struct {
 	Done   bool
 }
 
-// ProblemFile is a file team-solve writes, shown on its job's page.
+// ProblemFile is a file a workflow reads or writes, shown on its job's page.
 type ProblemFile struct {
 	Name string
 	Text string
 }
 
-var teamSolveFiles = []string{"task.md", "plan.md", "notes.md", "solution.py", "test-output.log", "review.md", "final-test-output.log"}
+// workflowFiles are the files the bundled workflows read and write, shown
+// on a run's page when they are there, after the latest run's trace.
+var workflowFiles = []string{"task.md", "goal.md", "check.sh", "plan.md", "notes.md", "review.md", "progress.md",
+	"run.sh", "solution.py", "check-output.log"}
 
 func (a *App) jobData(id string) (JobPage, error) {
 	job, err := a.jobs.Get(id)
@@ -430,7 +434,15 @@ func (a *App) jobData(id string) (JobPage, error) {
 	}
 	page := JobPage{Job: job, Output: a.jobs.Output(job.Job, 256*1024), Done: !job.Running()}
 	if job.Folder != "" {
-		for _, name := range teamSolveFiles {
+		traces, _ := filepath.Glob(filepath.Join(job.Folder, "workflow-logs", "*", "trace.tsv"))
+		if len(traces) > 0 {
+			latest := traces[len(traces)-1]
+			if data, err := os.ReadFile(latest); err == nil {
+				rel, _ := filepath.Rel(job.Folder, latest)
+				page.Files = append(page.Files, ProblemFile{rel, string(data)})
+			}
+		}
+		for _, name := range workflowFiles {
 			path := filepath.Join(job.Folder, name)
 			if readable(path) {
 				data, _ := os.ReadFile(path)
@@ -477,34 +489,56 @@ func (a *App) stopJob(w http.ResponseWriter, r *http.Request) {
 // ------------------------------------------------------------ workflows
 
 type WorkflowsPage struct {
-	Problems []string
-	Example  TeamSolveForm
-	Runs     []JobState
-	Settings *Settings
-	Error    string
+	Problems    []string
+	Goals       []string
+	Example     TeamSolveForm
+	GoalExample GoalForm
+	Runs        []JobState
+	Settings    *Settings
+	Error       string
 }
 
-// TeamSolveForm is a new problem: its task and up to three samples.
+// TeamSolveForm is a new problem: its task, up to three samples and a check.sh.
 type TeamSolveForm struct {
 	Name    string
 	Task    string
 	Inputs  [3]string
 	Outputs [3]string
+	Check   string
+}
+
+// GoalForm is a new goal: goal.md, check.sh, and whether to start from the
+// example's other files.
+type GoalForm struct {
+	Name    string
+	Goal    string
+	Check   string
+	Example bool
 }
 
 func (a *App) problemsRoot() string { return filepath.Join(a.repo, "state", "team-solve") }
+func (a *App) goalsRoot() string    { return filepath.Join(a.repo, "state", "goal") }
+
+// folders lists the folders under root that hold marker.
+func folders(root, marker string) []string {
+	var names []string
+	paths, _ := filepath.Glob(filepath.Join(root, "*", marker))
+	for _, path := range paths {
+		names = append(names, filepath.Base(filepath.Dir(path)))
+	}
+	return names
+}
 
 func (a *App) workflowsPage(w http.ResponseWriter, r *http.Request) {
-	data := WorkflowsPage{}
-	dirs, _ := filepath.Glob(filepath.Join(a.problemsRoot(), "*", "task.md"))
-	for _, dir := range dirs {
-		data.Problems = append(data.Problems, filepath.Base(filepath.Dir(dir)))
-	}
+	data := WorkflowsPage{Problems: folders(a.problemsRoot(), "task.md"), Goals: folders(a.goalsRoot(), "goal.md")}
 	if r.FormValue("example") != "" {
 		data.Example = a.exampleProblem()
 	}
+	if r.FormValue("goal-example") != "" {
+		data.GoalExample = a.exampleGoal()
+	}
 	for _, job := range a.jobs.List() {
-		if job.Kind == "team-solve" {
+		if job.Kind == "team-solve" || job.Kind == "goal" {
 			data.Runs = append(data.Runs, job)
 		}
 	}
@@ -527,18 +561,49 @@ func (a *App) exampleProblem() TeamSolveForm {
 	return f
 }
 
-// writeProblem makes state/team-solve/NAME with task.md and tests/N.in and
-// N.out, refusing to replace a problem that is there.
-func (a *App) writeProblem(f TeamSolveForm) (string, error) {
-	if !labelPattern.MatchString(f.Name) {
+// exampleGoal is the bundled workflows/goal/example, as a form.
+func (a *App) exampleGoal() GoalForm {
+	dir := filepath.Join(a.repo, "workflows", "goal", "example")
+	goal, _ := os.ReadFile(filepath.Join(dir, "goal.md"))
+	check, _ := os.ReadFile(filepath.Join(dir, "check.sh"))
+	return GoalForm{Name: "textstats", Goal: string(goal), Check: string(check), Example: true}
+}
+
+// writeText writes text to dir/name with Unix line ends and a final newline.
+func writeText(dir, name, text string) error {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(text), 0o644)
+}
+
+// newFolder checks a new folder's name and that root holds no folder by it.
+func newFolder(root, name, what string) (string, error) {
+	if !labelPattern.MatchString(name) {
 		return "", fmt.Errorf("the name may contain only letters, digits, '.', '_' and '-'")
+	}
+	dir := filepath.Join(root, name)
+	if fileExists(dir) {
+		return "", fmt.Errorf("a %s called %s exists already in %s; pick it under Run again, or use another name", what, name, dir)
+	}
+	return dir, nil
+}
+
+// writeProblem makes state/team-solve/NAME with task.md, the samples as
+// tests/N.in and N.out, and check.sh when given, refusing to replace a
+// problem that is there.
+func (a *App) writeProblem(f TeamSolveForm) (string, error) {
+	dir, err := newFolder(a.problemsRoot(), f.Name, "problem")
+	if err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(f.Task) == "" {
 		return "", fmt.Errorf("write the problem in the task")
-	}
-	dir := filepath.Join(a.problemsRoot(), f.Name)
-	if fileExists(dir) {
-		return "", fmt.Errorf("a problem called %s exists already in %s; pick it under Run again, or use another name", f.Name, dir)
 	}
 	samples := 0
 	for i := range 3 {
@@ -550,21 +615,17 @@ func (a *App) writeProblem(f TeamSolveForm) (string, error) {
 			samples++
 		}
 	}
-	if samples == 0 {
-		return "", fmt.Errorf("give at least one sample: an input and the output expected for it")
+	hasCheck := strings.TrimSpace(f.Check) != ""
+	if samples == 0 && !hasCheck {
+		return "", fmt.Errorf("give the goal: at least one sample, or a check.sh that exits 0 when the task is done")
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "tests"), 0o755); err != nil {
+	if err := writeText(dir, "task.md", f.Task); err != nil {
 		return "", err
 	}
-	write := func(name, text string) error {
-		text = strings.ReplaceAll(text, "\r\n", "\n")
-		if !strings.HasSuffix(text, "\n") {
-			text += "\n"
+	if hasCheck {
+		if err := writeText(dir, "check.sh", f.Check); err != nil {
+			return "", err
 		}
-		return os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
-	}
-	if err := write("task.md", f.Task); err != nil {
-		return "", err
 	}
 	n := 0
 	for i := range 3 {
@@ -572,26 +633,82 @@ func (a *App) writeProblem(f TeamSolveForm) (string, error) {
 			continue
 		}
 		n++
-		if err := write(fmt.Sprintf("tests/%d.in", n), f.Inputs[i]); err != nil {
+		if err := writeText(dir, fmt.Sprintf("tests/%d.in", n), f.Inputs[i]); err != nil {
 			return "", err
 		}
-		if err := write(fmt.Sprintf("tests/%d.out", n), f.Outputs[i]); err != nil {
+		if err := writeText(dir, fmt.Sprintf("tests/%d.out", n), f.Outputs[i]); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
 }
 
+// writeGoal makes state/goal/NAME with goal.md and check.sh, and with the
+// example's other files when it starts from the example.
+func (a *App) writeGoal(f GoalForm) (string, error) {
+	dir, err := newFolder(a.goalsRoot(), f.Name, "goal")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(f.Goal) == "" || strings.TrimSpace(f.Check) == "" {
+		return "", fmt.Errorf("write both the goal and check.sh, which exits 0 once the goal is met")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if f.Example {
+		example := filepath.Join(a.repo, "workflows", "goal", "example")
+		entries, err := os.ReadDir(example)
+		if err != nil {
+			return "", err
+		}
+		for _, entry := range entries {
+			if !entry.Type().IsRegular() || entry.Name() == "goal.md" || entry.Name() == "check.sh" {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(example, entry.Name()))
+			if err != nil {
+				return "", err
+			}
+			if err := os.WriteFile(filepath.Join(dir, entry.Name()), data, 0o644); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := writeText(dir, "goal.md", f.Goal); err != nil {
+		return "", err
+	}
+	return dir, writeText(dir, "check.sh", f.Check)
+}
+
+// existingFolder is root/name when it holds marker.
+func existingFolder(root, name, marker, what string) (string, error) {
+	dir := filepath.Join(root, name)
+	if !labelPattern.MatchString(name) || !fileExists(filepath.Join(dir, marker)) {
+		return "", fmt.Errorf("no %s called %q", what, name)
+	}
+	return dir, nil
+}
+
+// workflowEnv is the agent and step timeout a workflow form chose.
+func workflowEnv(r *http.Request) map[string]string {
+	env := map[string]string{}
+	if agent := r.FormValue("agent"); agent != "" {
+		env["WORKFLOW_AGENT"] = agent
+	}
+	if timeout := strings.TrimSpace(r.FormValue("timeout")); timeout != "" {
+		env["WORKFLOW_TIMEOUT"] = timeout
+	}
+	return env
+}
+
 func (a *App) startTeamSolve(w http.ResponseWriter, r *http.Request) {
 	var dir string
 	var err error
 	if existing := r.FormValue("existing"); existing != "" {
-		if !labelPattern.MatchString(existing) || !fileExists(filepath.Join(a.problemsRoot(), existing, "task.md")) {
-			err = fmt.Errorf("no problem called %q", existing)
-		}
-		dir = filepath.Join(a.problemsRoot(), existing)
+		dir, err = existingFolder(a.problemsRoot(), existing, "task.md", "problem")
 	} else {
-		f := TeamSolveForm{Name: strings.TrimSpace(r.FormValue("name")), Task: r.FormValue("task")}
+		f := TeamSolveForm{Name: strings.TrimSpace(r.FormValue("name")), Task: r.FormValue("task"), Check: r.FormValue("check")}
 		for i := range 3 {
 			f.Inputs[i], f.Outputs[i] = r.FormValue(fmt.Sprintf("in%d", i+1)), r.FormValue(fmt.Sprintf("out%d", i+1))
 		}
@@ -602,14 +719,24 @@ func (a *App) startTeamSolve(w http.ResponseWriter, r *http.Request) {
 		a.notice(w, bad(err))
 		return
 	}
-	env := map[string]string{}
-	if agent := r.FormValue("agent"); agent != "" {
-		env["TEAM_SOLVE_AGENT"] = agent
+	a.startJob(w, r, "team-solve", "team-solve "+filepath.Base(dir), "team-solve", []string{dir}, workflowEnv(r), dir)
+}
+
+func (a *App) startGoal(w http.ResponseWriter, r *http.Request) {
+	var dir string
+	var err error
+	if existing := r.FormValue("existing"); existing != "" {
+		dir, err = existingFolder(a.goalsRoot(), existing, "goal.md", "goal")
+	} else {
+		dir, err = a.writeGoal(GoalForm{Name: strings.TrimSpace(r.FormValue("name")), Goal: r.FormValue("goal"),
+			Check: r.FormValue("check"), Example: r.FormValue("example") != ""})
 	}
-	if timeout := strings.TrimSpace(r.FormValue("timeout")); timeout != "" {
-		env["TEAM_SOLVE_TIMEOUT"] = timeout
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		a.notice(w, bad(err))
+		return
 	}
-	a.startJob(w, r, "team-solve", "team-solve "+filepath.Base(dir), "team-solve", []string{dir}, env, dir)
+	a.startJob(w, r, "goal", "goal "+filepath.Base(dir), "workflow", []string{"goal", dir}, workflowEnv(r), dir)
 }
 
 // ------------------------------------------------------------ benchmarks

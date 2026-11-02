@@ -47,8 +47,8 @@ SETTINGS = [
     ("BENCH_TASKS", "tools", "Tasks ./bin/bench-agents runs (default: every folder in bench/)."),
     ("BENCH_RUNS", "tools", "Runs of each task with each agent (default 1)."),
     ("BENCH_TIMEOUT", "tools", "Seconds per benchmark run (default 900)."),
-    ("TEAM_SOLVE_AGENT", "tools", "The agent every ./bin/team-solve step runs: pi (default), opencode or codex."),
-    ("TEAM_SOLVE_TIMEOUT", "tools", "Seconds each ./bin/team-solve step may take (default 600)."),
+    ("WORKFLOW_AGENT", "tools", "The agent each ./bin/workflow and ./bin/team-solve step runs, unless the state names one: pi (default), opencode or codex."),
+    ("WORKFLOW_TIMEOUT", "tools", "Seconds each workflow step may take, unless the state sets its own (default 600)."),
     ("EVAL_CASES", "tools", "Cases ./bin/evals runs, separated by spaces (default: all; ./bin/evals list shows them)."),
     ("EVAL_SAMPLES", "tools", "Times ./bin/evals asks each case (default 1)."),
     ("EVAL_TIMEOUT", "tools", "Seconds one ./bin/evals request may take (default 900)."),
@@ -86,6 +86,8 @@ def parse(text, path="puny.conf"):
         if not match:
             raise ConfigError(f"{path} line {number} is not KEY=VALUE: {line!r}")
         key = match.group(1)
+        if key.startswith("TEAM_SOLVE_"):
+            raise ConfigError(f"{path} line {number}: {key} is now {key.replace('TEAM_SOLVE_', 'WORKFLOW_')}; rename it")
         if key not in KEYS:
             raise ConfigError(f"{path} line {number}: {key} is not a puny-local-ai setting; expected one of {', '.join(KEYS)}")
         value = unquote(match.group(2))

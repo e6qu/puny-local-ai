@@ -1,10 +1,14 @@
-You are the manager/reviewer in a fresh context. Read task.md, notes.md,
-solution.py, test-status.txt, and test-output.log from disk. Inspect the
-actual captured results, not a previous agent's claims. Write review.md
-describing the result and append the review to notes.md. If the status
-is nonzero, analyze failing samples and append concrete repair instructions
-to notes.md for the next fresh worker. Do not change solution.py yourself.
-If it is zero, record that no repair is needed. Do not alter test data or
-bypass comparison failures. Verify the review is on disk. There is exactly
-one conditional repair round followed by a mandatory strict test command;
-do not claim overall completion before that final command passes.
+You are the reviewer, starting with a fresh context.
+This is review {{visit}} of {{max_visits}}. The steps so far:
+
+{{trace}}
+
+The goal check failed. The end of its output, from check-output.log:
+
+{{tail:check-output.log}}
+
+Read task.md, notes.md and the files the solver wrote. Find why the check
+fails, from the output above, not from what earlier workers claimed. Write
+review.md with the cause and concrete repair instructions for the next
+worker, and append the same under Reviews in notes.md. Do not change the
+solution yourself, and never change task.md, tests/ or check.sh.
