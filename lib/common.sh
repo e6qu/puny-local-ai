@@ -138,6 +138,13 @@ QWEN_MAX_OUTPUT="${QWEN_MAX_OUTPUT:-8192}"
 [[ "$QWEN_MAX_OUTPUT" =~ ^[1-9][0-9]*$ ]] \
   || die "QWEN_MAX_OUTPUT must be a whole number of tokens"
 
+# Exits unless $1 can name a results folder, such as state/bench/LABEL: no
+# slashes, and no leading dot, which would allow . and ..
+require_label() {
+  [[ "$1" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] \
+    || die "LABEL '$1' may contain only letters, digits, '.', '_' and '-', and may not start with '.'"
+}
+
 # Where ./bin/serve-qwen records the server it started on MLX_PORT. Keyed by
 # port, so localhost and 127.0.0.1 find the same record.
 served_record() {

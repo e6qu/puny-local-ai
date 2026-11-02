@@ -669,7 +669,8 @@ def report(paths):
     if not rows:
         die("the results files hold no results")
     labels = sorted({r["label"] for r in rows})
-    print(f"{'label':<16} {'suite':<13} {'passed':>9} {'errors':>7}  failed cases")
+    w = max(16, *(len(label) for label in labels))
+    print(f"{'label':<{w}} {'suite':<13} {'passed':>9} {'errors':>7}  failed cases")
     for label in labels:
         for suite in SUITES:
             mine = [r for r in rows if r["label"] == label and r["suite"] == suite]
@@ -679,11 +680,11 @@ def report(paths):
             errors = sum(r["result"] == "error" for r in mine)
             failed = sorted({r["case"] for r in mine if r["result"] != "pass"})
             shown = ", ".join(failed[:6]) + (f" and {len(failed) - 6} more" if len(failed) > 6 else "")
-            print(f"{label:<16} {suite:<13} {passed:>4}/{len(mine):<4} {errors:>7}  {shown}")
+            print(f"{label:<{w}} {suite:<13} {passed:>4}/{len(mine):<4} {errors:>7}  {shown}")
     speed = [r for r in rows if r["suite"] == "speed" and r["result"] == "pass"]
     if speed:
         print()
-        print(f"{'label':<16} {'prompt':>8} {'prefill tok/s':>14} {'decode tok/s':>13} {'first token s':>14}")
+        print(f"{'label':<{w}} {'prompt':>8} {'prefill tok/s':>14} {'decode tok/s':>13} {'first token s':>14}")
         for label in labels:
             for case in sorted({r["case"] for r in speed if r["label"] == label}, key=lambda c: int(c.rstrip("k"))):
                 mine = [r for r in speed if r["label"] == label and r["case"] == case]
@@ -692,7 +693,7 @@ def report(paths):
                     values = [r[key] for r in mine if r.get(key) is not None]
                     return statistics.median(values) if values else float("nan")
 
-                print(f"{label:<16} {case:>8} {median('prefill_tps'):>14.1f} {median('decode_tps'):>13.1f} "
+                print(f"{label:<{w}} {case:>8} {median('prefill_tps'):>14.1f} {median('decode_tps'):>13.1f} "
                       f"{median('first_token_s'):>14.2f}")
 
 

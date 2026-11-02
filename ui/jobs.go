@@ -28,15 +28,28 @@ import (
 // A job runs in its own session, so it keeps running when the UI stops, and
 // a UI started later finds it again from these files.
 
-// Kinds of jobs, and which of them use the model server: those run one at a
-// time, as do the ones that download.
-var jobGroups = map[string]string{
-	"download":   "download",
-	"setup":      "download",
-	"team-solve": "model",
-	"bench":      "model",
-	"evals":      "model",
-	"smoke":      "model",
+// Kinds of jobs, and which of them use the model server or download: two
+// jobs that share a group never run at the same time. bin/verify does both.
+var jobGroups = map[string][]string{
+	"download":   {"download"},
+	"setup":      {"download"},
+	"team-solve": {"model"},
+	"bench":      {"model"},
+	"evals":      {"model"},
+	"smoke":      {"model"},
+	"verify":     {"model", "download"},
+}
+
+// sharedGroup is a group both kinds of job belong to, or "".
+func sharedGroup(kind, other string) string {
+	for _, group := range jobGroups[kind] {
+		for _, theirs := range jobGroups[other] {
+			if group == theirs {
+				return group
+			}
+		}
+	}
+	return ""
 }
 
 type Job struct {
@@ -109,14 +122,14 @@ func NewJobs(repo string) *Jobs {
 
 // Start runs bin/command with args and env as a new job.
 func (js *Jobs) Start(kind, title, command string, args []string, env map[string]string, folder string) (*Job, error) {
-	group, ok := jobGroups[kind]
-	if !ok {
+	if _, ok := jobGroups[kind]; !ok {
 		return nil, fmt.Errorf("unknown kind of job %q", kind)
 	}
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	for _, other := range js.list() {
-		if other.Running() && jobGroups[other.Kind] == group {
+		group := sharedGroup(kind, other.Kind)
+		if other.Running() && group != "" {
 			why := "they share the model server"
 			if group == "download" {
 				why = "downloads run one at a time"

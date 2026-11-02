@@ -27,6 +27,16 @@
   <div id="evals-notice"></div>
 </form>
 </div>
+<form class="card" hx-post="/benchmarks/verify" hx-target="#verify-notice" hx-disabled-elt="find button">
+  <div class="cardhead"><h2>Verify a preset</h2><code>./bin/verify</code></div>
+  <p class="muted">Checks one preset end to end on this Mac: downloads it if needed, starts its own server, runs the steps picked, stops the server, and writes a report to <code>state/verify/</code> with the machine, the versions, the results and each request's memory peak against its estimate. It needs the port to itself, so stop the server on the <a href="/">Server</a> page first. With all three steps it takes hours.</p>
+  {{if .Data.PresetError}}<p class="bad">{{.Data.PresetError}}</p>{{end}}
+  <label class="field">Preset <select name="preset">{{range .Data.Presets}}<option value="{{.Name}}">{{.Name}}: {{.About}}</option>{{end}}</select></label>
+  <fieldset><legend>Steps</legend>{{range .Data.Steps}}<label class="check"><input type="checkbox" name="step" value="{{.}}" checked> {{.}}</label>{{end}}</fieldset>
+  <fieldset><legend>Agents</legend>{{range .Data.Agents}}<label class="check"><input type="checkbox" name="agent" value="{{.}}"{{if ne . "codex"}} checked{{end}}> {{.}}</label>{{end}}</fieldset>
+  <div class="row"><span class="grow"></span><button class="primary">Verify</button></div>
+  <div id="verify-notice"></div>
+</form>
 <section class="card"><div class="cardhead"><h2>Runs</h2></div>{{template "job-table" .Data.Runs}}</section>
 <section class="card"><div class="cardhead"><h2>Agent benchmark results</h2><code>./bin/bench-agents report</code></div><pre class="console">{{.Data.BenchReport}}</pre></section>
 <section class="card"><div class="cardhead"><h2>Eval results</h2><code>./bin/evals report</code></div><pre class="console">{{.Data.EvalsReport}}</pre></section>

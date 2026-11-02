@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	labelPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	labelPattern  = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
 	modelPattern  = regexp.MustCompile(`^(modelscope:)?[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`) // lib/sources.py's REPO
 	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	agents        = []string{"opencode", "pi", "codex"}
@@ -56,6 +56,7 @@ func (a *App) routes() {
 	m.HandleFunc("GET /benchmarks", a.benchmarksPage)
 	m.HandleFunc("POST /benchmarks/agents", a.startBench)
 	m.HandleFunc("POST /benchmarks/evals", a.startEvals)
+	m.HandleFunc("POST /benchmarks/verify", a.startVerify)
 
 	m.HandleFunc("GET /agents", a.agentsPage)
 	m.HandleFunc("POST /agents/integrate/{action}", a.integrate)
@@ -617,13 +618,19 @@ type BenchmarksPage struct {
 	Tasks       []string
 	Agents      []string
 	Suites      []string
+	Presets     []Preset
+	Steps       []string
+	PresetError string
 	BenchReport string
 	EvalsReport string
 	Runs        []JobState
 }
 
 func (a *App) benchmarksPage(w http.ResponseWriter, r *http.Request) {
-	data := BenchmarksPage{Agents: agents, Suites: evalSuites}
+	data := BenchmarksPage{Agents: agents, Suites: evalSuites, Steps: verifySteps}
+	if err := a.runJSON(r.Context(), quick, &data.Presets, "models", "presets", "--json"); err != nil {
+		data.PresetError = err.Error()
+	}
 	dirs, _ := filepath.Glob(filepath.Join(a.repo, "bench", "*", "prompt.txt"))
 	for _, dir := range dirs {
 		data.Tasks = append(data.Tasks, filepath.Base(filepath.Dir(dir)))
@@ -639,7 +646,7 @@ func (a *App) benchmarksPage(w http.ResponseWriter, r *http.Request) {
 		data.EvalsReport = err.Error()
 	}
 	for _, job := range a.jobs.List() {
-		if job.Kind == "bench" || job.Kind == "evals" {
+		if job.Kind == "bench" || job.Kind == "evals" || job.Kind == "verify" {
 			data.Runs = append(data.Runs, job)
 		}
 	}
@@ -735,6 +742,39 @@ func (a *App) startEvals(w http.ResponseWriter, r *http.Request) {
 		env["EVAL_THINKING"] = thinking
 	}
 	a.startJob(w, r, "evals", "Model evals "+label, "evals", append([]string{label}, suites...), env, "")
+}
+
+// The steps of bin/verify, in the order it runs them.
+var verifySteps = []string{"smoke", "evals", "bench"}
+
+func (a *App) startVerify(w http.ResponseWriter, r *http.Request) {
+	preset := r.FormValue("preset")
+	var presets []Preset
+	err := a.runJSON(r.Context(), quick, &presets, "models", "presets", "--json")
+	known := false
+	for _, p := range presets {
+		known = known || p.Name == preset
+	}
+	steps, picked := chosen(r, "step", verifySteps), chosen(r, "agent", agents)
+	switch {
+	case err != nil:
+	case !known:
+		err = fmt.Errorf("no preset %q", preset)
+	case len(steps) == 0:
+		err = fmt.Errorf("pick at least one step")
+	case len(picked) == 0 && (has(steps, "smoke") || has(steps, "bench")):
+		err = fmt.Errorf("pick at least one agent for the smoke test and the benchmark")
+	}
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		a.notice(w, bad(err))
+		return
+	}
+	env := map[string]string{"VERIFY_STEPS": strings.Join(steps, " ")}
+	if len(picked) > 0 {
+		env["VERIFY_AGENTS"] = strings.Join(picked, " ")
+	}
+	a.startJob(w, r, "verify", "Verify "+preset, "verify", []string{preset}, env, "")
 }
 
 // ------------------------------------------------------------ agents

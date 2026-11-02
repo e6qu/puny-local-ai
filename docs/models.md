@@ -22,6 +22,7 @@ That rules out the model the [original guide](compatibility.md#differences-from-
 - **For each request** it also picks the prefill step: the largest up to `QWEN_PREFILL_STEP` that fits, down to 16 tokens. Short prompts get 512 tokens per step; only long ones go smaller.
 - **For each request** it refuses any model, adapter or draft model other than the one it serves. mlx-lm would otherwise unload the served model and load, or download, the one named, outside every check.
 - **Codex's requests** go through the same checks: the server translates them into Chat Completions requests to itself ([how-it-works.md](how-it-works.md#how-codex-is-served)).
+- **For each request** it logs the memory the request reached at its peak next to the estimate it was admitted on, and logs a warning when the peak went over. Refused requests are logged with their reason too; mlx-lm itself tells only the agent. `./bin/verify` sums these lines up in its report.
 - **While running**, a watchdog stops the server with a message when free memory falls to 0.5 GiB, for example because another application took it, or free disk to 1 GiB, before macOS starts to freeze. If the watchdog itself fails, it stops the server too.
 - **Downloads** check that the model's remaining size plus 5 GiB is free first, and the mlx-lm and agent installs want 6 GiB free. uv's and Hugging Face's caches live in `state/`, so these checks see them.
 
@@ -62,7 +63,7 @@ The server samples with `top_p=0.95` and `min_p=0.0`, and with each preset's tem
 
 ## Presets for larger Macs
 
-A Mac with more memory lets the GPU use more, and can run a larger model with the same guards. Seven presets are for that; choose one with `QWEN_PRESET` and download it with `./bin/setup` followed by its name. The first five are in the same families as the default, with the same hybrid of full and linear attention that the memory estimate was measured on; Muse Glimmer is described [below](#muse-glimmer). They were picked on 2026-11-01 from the MLX builds `./bin/models info` reports as runnable by mlx-lm 0.32.2 with a tool-call parser, and they have not been run here: this Mac's GPU may use only 16 GiB.
+A Mac with more memory lets the GPU use more, and can run a larger model with the same guards. Seven presets are for that; choose one with `QWEN_PRESET` and download it with `./bin/setup` followed by its name. The first five are in the same families as the default, with the same hybrid of full and linear attention that the memory estimate was measured on; Muse Glimmer is described [below](#muse-glimmer). They were picked on 2026-11-01 from the MLX builds `./bin/models info` reports as runnable by mlx-lm 0.32.2 with a tool-call parser, and they have not been run here: this Mac's GPU may use only 16 GiB. [Checking a preset on another Mac](#checking-a-preset-on-another-mac) says how to test one.
 
 | Preset | Model and commit | Weights | GPU limit for 32,768 tokens | For 131,072 | For the full 262,144 | Free memory needed to start |
 |---|---|---|---|---|---|---|
@@ -87,6 +88,24 @@ What each model is:
 - **`glimmer-4`** and **`glimmer`**: Meta's Muse Glimmer at 4 and 8 bits, a dense 30-billion-parameter model from August 2026 made for agents running on one machine ([card](https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/README.md), [Meta's page](https://dev.meta.ai/lp/muse-glimmer)). On Meta's table it trails Qwen3.6-27B on coding, 76.0 against 77.2 on SWE-bench Verified and 51.7 against 60.7 on Terminal-Bench 2.1, and leads it on SWE-bench Pro, 51.2 against 50.2, and on tool use, 75.5 against 62.5 on MCP Atlas. Qwen3.8-27B's card gives 73.0 on Terminal-Bench 2.1 and 61.7 on SWE-bench Pro, but with its own harnesses: Meta's table puts Qwen3.6-27B at 60.7 on Terminal-Bench 2.1 where Qwen's puts it at 63.4, so the two cards do not compare directly. Its window is 131,072 tokens. Apache-2.0, and Meta's [usage policy](https://huggingface.co/meta-models/Muse-Glimmer-30B/blob/cec94fcfd6512f2cfe708138c32533b346ea4f69/USAGE_POLICY.md) applies too: it lists prohibited uses and says the model is not meant for anyone under 18. The MLX builds leave that file out.
 
 Not picked: Qwen3.6-27B, which Qwen3.8-27B replaces at the same size. Qwen3.6-35B-A3B at 8 bits (35.13 GiB), the unpruned model that `reap` is pruned from, because Qwen3.8-27B scores higher on Qwen's tables and downloads less. Qwen3.8-Flash-Next (103.86 GiB at 4 bits), whose architecture, `qwen4_exp`, is not in mlx-lm 0.32.2 and whose card states an `other` license; Qwen3.8-2.4T-A95B, far beyond any Mac. gpt-oss-120b has no tool-call parser in mlx-lm 0.32.2. MiniMax-M2.5 at 4 bits loads 119.83 GiB, more than a 128 GiB Mac's GPU may use. GLM-4.7-Flash uses an attention layout the memory estimate does not model, and GLM-5.3-Flash's architecture is not in mlx-lm 0.32.2. Muse Glimmer at 6 bits (24.58 GiB): the 4- and 8-bit builds bracket it, as for the other families.
+
+### Checking a preset on another Mac
+
+On the Mac in question, with this repo, `./bin/setup mlx opencode pi` done and Codex installed if it is to be tested:
+
+```sh
+./bin/models info mlx-community/Qwen3.8-27B-4bit@10c35caafbb80f7dc6a7a432cdd11af10a6d4818   # what fits there
+./bin/verify qwen38-4
+```
+
+`./bin/verify` downloads the preset if needed, starts its own server (stop any other one first), runs `./bin/smoke-test`, `./bin/evals` and `./bin/bench-agents` with OpenCode, Pi and, when installed, Codex, then stops the server. A failed step does not stop the next one. With every step at its defaults it takes hours; `VERIFY_STEPS="smoke evals"` leaves out the benchmark, and the `EVAL_*` and `BENCH_*` settings apply as usual. Its report, `state/verify/PRESET-TIME/report.md`, gives:
+
+- the chip, the memory, the GPU limit macOS reports and the macOS version, but not the Mac's name or serial number;
+- the model and commit, the settings, the mlx-lm environment and the agents' versions;
+- each step's result and time, the evals and benchmark results;
+- the server's memory check, and how each request's peak compared with the estimate the memory guard admitted it on. A peak over its estimate means the guard was too optimistic on that Mac, and is worth reporting with `serve.log`, which sits next to the report.
+
+The evals and benchmark results are also kept under the label `PRESET-TIME`, so `./bin/evals report` and `./bin/bench-agents report` show them next to the ones from this Mac. The same works for `kat` with Codex, which was not benchmarked here for lack of free memory.
 
 ### Muse Glimmer
 

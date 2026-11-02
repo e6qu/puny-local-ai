@@ -250,6 +250,44 @@ func TestBenchmarkFormsAreChecked(t *testing.T) {
 	}
 }
 
+func TestVerifyFormIsChecked(t *testing.T) {
+	a, _ := newTestApp(t)
+	page := call(a, "GET", "/benchmarks", nil, nil).Body.String()
+	if !strings.Contains(page, `<option value="small">small: a small one</option>`) {
+		t.Fatalf("the presets are missing: %s", page)
+	}
+	for _, form := range []url.Values{
+		{"preset": {"nope"}, "step": {"smoke"}, "agent": {"pi"}},
+		{"preset": {"small"}, "agent": {"pi"}},
+		{"preset": {"small"}, "step": {"bench"}},
+		{"preset": {"small"}, "step": {"lint"}, "agent": {"pi"}},
+	} {
+		if w := call(a, "POST", "/benchmarks/verify", form, nil); w.Code != http.StatusBadRequest {
+			t.Errorf("%v: %d", form, w.Code)
+		}
+	}
+	w := call(a, "POST", "/benchmarks/verify", url.Values{"preset": {"small"}, "step": {"bench", "smoke"}, "agent": {"codex", "pi"}}, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	s, _ := a.jobs.Get(strings.TrimPrefix(w.Header().Get("HX-Redirect"), "/jobs/"))
+	if s.Command != "bin/verify" || strings.Join(s.Args, " ") != "small" ||
+		s.Env["VERIFY_STEPS"] != "smoke bench" || s.Env["VERIFY_AGENTS"] != "pi codex" {
+		t.Fatalf("job: %+v", s.Job)
+	}
+	// The fake repo has no bin/verify, so the job fails at once and the next may start.
+	waitFor(t, a.jobs, s.ID, "failed (exit 127)")
+	// The evals alone need no agent.
+	w = call(a, "POST", "/benchmarks/verify", url.Values{"preset": {"small"}, "step": {"evals"}}, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	s, _ = a.jobs.Get(strings.TrimPrefix(w.Header().Get("HX-Redirect"), "/jobs/"))
+	if _, set := s.Env["VERIFY_AGENTS"]; set || s.Env["VERIFY_STEPS"] != "evals" {
+		t.Fatalf("env: %v", s.Env)
+	}
+}
+
 func TestDownloadsNeedAPinnedModel(t *testing.T) {
 	a, _ := newTestApp(t)
 	for _, spec := range []string{"org/m", "org/m@main", "bad name@" + strings.Repeat("a", 40), "../x@" + strings.Repeat("a", 40)} {

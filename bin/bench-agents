@@ -7,7 +7,9 @@
 #   ./bin/bench-agents LABEL     run every task with every agent against the
 #                              running server; LABEL names the model, such as
 #                              reap or kat
-#   ./bin/bench-agents report    summarize every run so far, per label
+#   ./bin/bench-agents report [LABEL...]
+#                              summarize every run so far, per label, or
+#                              only the labels named
 #
 # Results go to state/bench/LABEL/results.tsv, with each run's log and final
 # files next to it. Runs happen in the system temp directory, for the reasons
@@ -27,9 +29,18 @@ source "$PUNY_ROOT/lib/agents.sh"
 results_root="$PUNY_ROOT/state/bench"
 
 report() {
-  shopt -s nullglob
-  local files=("$results_root"/*/results.tsv)
-  [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+  local files=() label
+  if [[ $# -eq 0 ]]; then
+    shopt -s nullglob
+    files=("$results_root"/*/results.tsv)
+    shopt -u nullglob
+    [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+  fi
+  for label in "$@"; do
+    require_label "$label"
+    [[ -f "$results_root/$label/results.tsv" ]] || die "no results for $label under $results_root"
+    files+=("$results_root/$label/results.tsv")
+  done
   python3 -I - "${files[@]}" <<'EOF'
 import csv, statistics, sys
 from collections import defaultdict
@@ -60,13 +71,16 @@ for label in sorted({r["label"] for r in rows}):
 EOF
 }
 
-[[ $# -eq 1 ]] || die "usage: $PUNY_ROOT/bin/bench-agents LABEL | $PUNY_ROOT/bin/bench-agents report"
+usage="usage: $PUNY_ROOT/bin/bench-agents LABEL | $PUNY_ROOT/bin/bench-agents report [LABEL...]"
+[[ $# -ge 1 ]] || die "$usage"
 if [[ "$1" == report ]]; then
-  report
+  shift
+  report "$@"
   exit
 fi
+[[ $# -eq 1 ]] || die "$usage"
 label="$1"
-[[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "LABEL may contain only letters, digits, '.', '_' and '-'"
+require_label "$label"
 
 agents=()
 read -r -a agents <<< "${BENCH_AGENTS:-opencode pi}"
@@ -161,4 +175,4 @@ for ((run = first_run; run < first_run + BENCH_RUNS; run++)); do
 done
 
 echo
-report
+report "$label"

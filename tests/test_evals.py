@@ -480,6 +480,9 @@ class BinEvalsTest(ServerCase):
         report = self.box.run(["bin/evals", "report"], extra_env=self.env)
         self.assertEqual(report.returncode, 0, report.stderr)
         self.assertRegex(report.stdout, r"small +coding +1/1")
+        only = self.box.run(["bin/evals", "report", "small"], extra_env=self.env)
+        self.assertEqual(only.returncode, 0, only.stderr)
+        self.assertEqual(only.stdout, report.stdout)
 
     def test_the_window_comes_from_the_served_record(self):
         result = self.box.run(["bin/evals", "small", "speed"], extra_env=self.env, timeout=120)
@@ -489,8 +492,9 @@ class BinEvalsTest(ServerCase):
             self.assertIn(f"/ speed / {size} sample 1: pass", result.stdout)
 
     def test_bad_arguments(self):
-        for args, message in ((["bin/evals"], "usage:"), (["bin/evals", "bad label"], "LABEL may contain"),
-                              (["bin/evals", "x", "vibes"], "unknown suite 'vibes'"), (["bin/evals", "report", "x"], "usage:")):
+        for args, message in ((["bin/evals"], "usage:"), (["bin/evals", "bad label"], "LABEL 'bad label' may contain"),
+                              (["bin/evals", ".hidden"], "may not start with '.'"), (["bin/evals", "report", "../x"], "LABEL '../x'"),
+                              (["bin/evals", "x", "vibes"], "unknown suite 'vibes'"), (["bin/evals", "report", "x"], "no results for x")):
             with self.subTest(args):
                 result = self.box.run(args, extra_env=self.env)
                 self.assertNotEqual(result.returncode, 0)

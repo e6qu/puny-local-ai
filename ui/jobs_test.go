@@ -101,6 +101,33 @@ func TestJobsSharingTheServerRunOneAtATime(t *testing.T) {
 	}
 }
 
+func TestVerifyWaitsForModelJobsAndDownloads(t *testing.T) {
+	repo := fakeRepo(t, map[string]string{"models": "sleep 30", "verify": "sleep 30", "evals": "exit 0"})
+	js := NewJobs(repo)
+	download, err := js.Start("download", "Download org/m", "models", []string{"download"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, js, download.ID, "running")
+	if _, err := js.Start("verify", "Verify small", "verify", []string{"small"}, nil, ""); err == nil ||
+		!strings.Contains(err.Error(), "downloads run one at a time") {
+		t.Fatalf("verify started during a download: %v", err)
+	}
+	js.Stop(download.ID)
+	waitFor(t, js, download.ID, "stopped")
+	verify, err := js.Start("verify", "Verify small", "verify", []string{"small"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, js, verify.ID, "running")
+	if _, err := js.Start("evals", "Model evals kat", "evals", []string{"kat"}, nil, ""); err == nil ||
+		!strings.Contains(err.Error(), "share the model server") {
+		t.Fatalf("evals started during verify: %v", err)
+	}
+	js.Stop(verify.ID)
+	waitFor(t, js, verify.ID, "stopped")
+}
+
 func TestStopEndsTheWholeSession(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "child-still-ran")
 	// The child sleeps, then writes the marker; Stop must end it too.

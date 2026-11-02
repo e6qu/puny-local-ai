@@ -101,7 +101,7 @@ This serves a page at `http://127.0.0.1:8090`, laid out like Docker Desktop: a s
 - **Discover** searches Hugging Face and ModelScope for MLX models. **Check** shows a model's size, whether mlx-lm can run it and parse its tool calls, and whether it fits in memory. **Download** fetches it the same way `./bin/models download` does, and **Use this model** makes it the one the server runs.
 - **Chat** talks to the model, with its thinking shown separately.
 - **Team-solve** writes a problem, its task and samples, into `state/team-solve/NAME/` and runs `./bin/team-solve` on it, or runs an earlier problem again. The run's page shows the plan, notes, solution, review and test logs the team wrote.
-- **Benchmarks** runs `./bin/bench-agents` and `./bin/evals` with the agents, tasks and suites you tick, and shows both reports.
+- **Benchmarks** runs `./bin/bench-agents` and `./bin/evals` with the agents, tasks and suites you tick, and shows both reports. **Verify a preset** runs `./bin/verify`.
 - **Agents** adds the local model to the agents' configs or removes it (`./bin/integrate`), installs OpenCode and Pi, and runs `./bin/smoke-test`.
 - **Jobs** lists every download, setup, workflow and benchmark started from the page, with its live output and a **Stop** button. Jobs keep running when the page stops, and keep their output in `state/jobs/`.
 - **Settings** (the gear) edits `puny.conf` as a form, with each setting's help, value and where it comes from, or as the file itself in an editor. Both save through `./bin/config`, so a value the scripts would refuse is never written, and **Save and restart server** applies server settings at once. The editor refuses to save over a change made in the terminal since it loaded the file.
@@ -174,6 +174,7 @@ It exits 0 when every sample passes. A step that fails, or takes longer than `TE
 - `./bin/team-solve [FOLDER]` has a team of fresh agent runs solve the programming problem in FOLDER; see above.
 - `./bin/bench-agents LABEL` runs the coding benchmark in `bench/`, and `./bin/bench-agents report` compares the results; see [docs/models.md](docs/models.md#comparing-models).
 - `./bin/evals LABEL` tests the served model directly, with no agent: tool calls, coding, long context and speed; `./bin/evals report` compares the results. See [docs/models.md](docs/models.md#evaluating-the-model-directly).
+- `./bin/verify [PRESET]` checks one preset end to end on this Mac: it starts its own server, runs the smoke test, the evals and the benchmark, stops the server, and writes a report to `state/verify/` to bring back. It is how the presets for larger Macs get tested; see [docs/models.md](docs/models.md#checking-a-preset-on-another-mac).
 - `./bin/install-agents [opencode|pi]` installs the pinned agent versions; `./bin/setup` uses it. It refuses releases younger than 24 hours. Set `ALLOW_FRESH_RELEASE=1` only for a release that fixes a reported security advisory.
 - `./bin/licenses` prints the license of every downloaded package and model, for [THIRD_PARTY.md](THIRD_PARTY.md).
 - `./tests/run` runs the test suite; `./tests/run --live` adds the tests against the real model and agents. [CONTRIBUTING.md](CONTRIBUTING.md#tests) explains both.

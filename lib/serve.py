@@ -158,6 +158,12 @@ def check_startup(args, config, weights_bytes, gpu_limit_bytes):
         )
 
 
+def refuse(error):
+    """Logs why a request is refused, which mlx-lm only tells the client, and raises it."""
+    logging.warning(f"Refused a request: {error}")
+    raise error
+
+
 def guard_requests(args, config, gpu_limit_bytes):
     """Checks each request before the server processes it."""
     original = server.ResponseGenerator._tokenize
@@ -167,11 +173,11 @@ def guard_requests(args, config, gpu_limit_bytes):
         prompt_tokens = len(result[0])
         tokens = prompt_tokens + gen_args.max_tokens
         if tokens > args.context_tokens:
-            raise ValueError(
+            refuse(ValueError(
                 f"the prompt has {prompt_tokens} tokens and the reply may use {gen_args.max_tokens}, "
                 f"{tokens} in all, over the {args.context_tokens}-token context window. "
                 "Compact the conversation or start a new one."
-            )
+            ))
         gpu_room_bytes = gpu_limit_bytes - mx.get_active_memory() - args.margin_bytes
         system_room_bytes = (
             memory.available_system_bytes() + mx.get_cache_memory() - memory.SYSTEM_RESERVE_BYTES
@@ -180,17 +186,50 @@ def guard_requests(args, config, gpu_limit_bytes):
         step = memory.pick_step(config, tokens, args.kv_bits, room_bytes, args.max_prefill_step_tokens)
         if step is None:
             need_bytes = memory.request_bytes(config, tokens, memory.MIN_PREFILL_STEP_TOKENS, args.kv_bits)
-            raise MemoryError(
+            refuse(MemoryError(
                 f"a {tokens}-token request needs {memory.gib(need_bytes)} but only {memory.gib(room_bytes)} is free. "
                 "Close other applications, or compact the conversation."
-            )
+            ))
         # mlx_lm.server reads this right after tokenizing, on the same thread,
         # and serves one request at a time with a quantized context cache.
         self.cli_args.prefill_step_size = step
+        self.puny_admitted = (tokens, step, memory.request_bytes(config, tokens, step, args.kv_bits))
         logging.info(f"Admitted {tokens} tokens with prefill step {step}; {memory.gib(room_bytes)} free")
         return result
 
     server.ResponseGenerator._tokenize = tokenize
+
+
+def measure_requests():
+    """Logs each request's peak memory next to the estimate it was admitted on.
+
+    The guards are only as safe as lib/memory.py's estimates, which were
+    measured on one Mac; ./bin/verify counts these lines to check them on
+    others. With a quantized context cache mlx-lm serves every request through
+    _serve_single, one at a time, so the peak belongs to that request alone.
+    """
+    original = server.ResponseGenerator._serve_single
+
+    def serve_single(self, request, stream):
+        self.puny_admitted = None
+        base_bytes = mx.get_active_memory()
+        mx.reset_peak_memory()
+        try:
+            return original(self, request, stream)
+        finally:
+            if self.puny_admitted is not None:
+                tokens, step, estimate_bytes = self.puny_admitted
+                peak_bytes = mx.get_peak_memory() - base_bytes
+                message = (
+                    f"Peak {memory.gib(peak_bytes)} above the loaded model for {tokens} tokens at prefill step "
+                    f"{step}; estimated {memory.gib(estimate_bytes)}"
+                )
+                if peak_bytes > estimate_bytes:
+                    logging.warning(f"{message}. Over the estimate: please report this with the server log.")
+                else:
+                    logging.info(message)
+
+    server.ResponseGenerator._serve_single = serve_single
 
 
 def guard_models():
@@ -355,6 +394,7 @@ def main():
 
     mx.set_cache_limit(memory.MLX_CACHE_LIMIT_BYTES)
     guard_requests(args, config, gpu_limit_bytes)
+    measure_requests()
     guard_models()
     keep_sliding_layers_unquantized()
     read_glimmer_replies_like_muse_spark()

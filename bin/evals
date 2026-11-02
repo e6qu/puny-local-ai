@@ -6,7 +6,8 @@
 #   ./bin/evals LABEL [SUITE...]   run the suites (default: all) against the
 #                                  running server; LABEL names the model,
 #                                  such as small or kat
-#   ./bin/evals report             summarize every run so far, per label
+#   ./bin/evals report [LABEL...]  summarize every run so far, per label, or
+#                                  only the labels named
 #   ./bin/evals list               show the suites and their cases
 #
 # Results go to state/evals/LABEL/results.jsonl, with every request and reply
@@ -31,15 +32,24 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 
 results_root="$PUNY_ROOT/state/evals"
-usage="usage: $PUNY_ROOT/bin/evals LABEL [SUITE...] | $PUNY_ROOT/bin/evals report | $PUNY_ROOT/bin/evals list"
+usage="usage: $PUNY_ROOT/bin/evals LABEL [SUITE...] | $PUNY_ROOT/bin/evals report [LABEL...] | $PUNY_ROOT/bin/evals list"
 
 [[ $# -ge 1 ]] || die "$usage"
 case "$1" in
   report)
-    [[ $# -eq 1 ]] || die "$usage"
-    shopt -s nullglob
-    files=("$results_root"/*/results.jsonl)
-    [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+    shift
+    files=()
+    if [[ $# -eq 0 ]]; then
+      shopt -s nullglob
+      files=("$results_root"/*/results.jsonl)
+      shopt -u nullglob
+      [[ ${#files[@]} -gt 0 ]] || die "no results under $results_root yet"
+    fi
+    for label in "$@"; do
+      require_label "$label"
+      [[ -f "$results_root/$label/results.jsonl" ]] || die "no results for $label under $results_root"
+      files+=("$results_root/$label/results.jsonl")
+    done
     exec python3 -I "$PUNY_ROOT/lib/evals.py" report "${files[@]}"
     ;;
   list)
@@ -50,7 +60,7 @@ esac
 
 label="$1"
 shift
-[[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "LABEL may contain only letters, digits, '.', '_' and '-'"
+require_label "$label"
 for suite in "$@"; do
   [[ " tool-calls coding long-context speed " == *" $suite "* ]] \
     || die "unknown suite '$suite'; expected any of: tool-calls coding long-context speed"

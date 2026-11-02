@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# Checks one model preset end to end on this Mac and writes a report to bring
+# back: it downloads the model if needed, starts the server, runs the smoke
+# test, the evals and the agent benchmark, stops the server, and sums up the
+# machine, the versions, the results and how each request's memory peak
+# compared with the estimate the guards relied on.
+#
+#   ./bin/verify [PRESET]   default: QWEN_PRESET from puny.conf, else kat
+#
+# The report goes to state/verify/PRESET-TIME/report.md, next to the server's
+# log and each step's output. It names the chip, the memory, the GPU limit and
+# the macOS version, but not the Mac's name or serial number. The evals and
+# benchmark results are also kept under the label PRESET-TIME, so
+# ./bin/evals report and ./bin/bench-agents report show them with the others.
+#
+# Every step runs at the default settings unless they are set, so a full run
+# takes hours: each of the seven benchmark tasks may use 15 minutes per agent,
+# and the long-context eval fills the whole window the server reports.
+#
+# Settings:
+#   VERIFY_STEPS          steps to run, default "smoke evals bench"
+#   VERIFY_AGENTS         agents for the smoke test and benchmark, default
+#                         "opencode pi", plus codex when it is installed
+#   VERIFY_START_TIMEOUT  seconds the server may take to start, default 900
+#   The settings of ./bin/serve-qwen, ./bin/evals and ./bin/bench-agents
+#   (QWEN_*, EVAL_*, BENCH_*) apply to their steps.
+
+set -euo pipefail
+# Resolves symlinks, so the command also works when linked from elsewhere.
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+source "$PUNY_ROOT/lib/mlx.sh"
+source "$PUNY_ROOT/lib/agents.sh"
+
+[[ $# -le 1 ]] || die "usage: $PUNY_ROOT/bin/verify [PRESET]"
+if [[ $# -eq 1 ]]; then
+  [[ " ${MODEL_PRESETS[*]} " == *" $1 "* ]] || die "unknown preset '$1'; expected one of: ${MODEL_PRESETS[*]}"
+  [[ -z "${QWEN_REPO:-}" && -z "${QWEN_REVISION:-}" ]] \
+    || die "QWEN_REPO and QWEN_REVISION are set; unset them to verify the preset $1"
+  QWEN_PRESET="$1"
+fi
+[[ -z "${QWEN_REPO:-}" && -z "${QWEN_REVISION:-}" ]] \
+  || die "./bin/verify checks a preset; unset QWEN_REPO and QWEN_REVISION, or name a preset"
+resolve_model_settings
+preset="${QWEN_PRESET:-kat}"
+# bin/serve-qwen resolves the preset again, from its environment.
+export QWEN_PRESET="$preset"
+
+steps=()
+read -r -a steps <<< "${VERIFY_STEPS:-smoke evals bench}"
+[[ ${#steps[@]} -gt 0 ]] || die "VERIFY_STEPS names no step; use any of: smoke evals bench"
+for step in "${steps[@]}"; do
+  [[ " smoke evals bench " == *" $step "* ]] || die "unknown step '$step' in VERIFY_STEPS; expected any of: smoke evals bench"
+done
+agents=()
+if [[ -n "${VERIFY_AGENTS:-}" ]]; then
+  read -r -a agents <<< "$VERIFY_AGENTS"
+  [[ ${#agents[@]} -gt 0 ]] || die "VERIFY_AGENTS names no agent"
+else
+  agents=(opencode pi)
+  if command -v codex >/dev/null 2>&1; then
+    agents+=(codex)
+  else
+    echo "codex: left out, not installed (brew install codex installs it)"
+  fi
+fi
+for agent in "${agents[@]}"; do
+  [[ " ${RUN_AGENTS[*]} " == *" $agent "* ]] || die "unknown agent '$agent' in VERIFY_AGENTS; expected any of: ${RUN_AGENTS[*]}"
+  command -v "$agent" >/dev/null 2>&1 || die "$agent is not installed; install it with $PUNY_ROOT/bin/setup, or leave it out of VERIFY_AGENTS"
+done
+VERIFY_START_TIMEOUT="${VERIFY_START_TIMEOUT:-900}"
+[[ "$VERIFY_START_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || die "VERIFY_START_TIMEOUT must be a positive whole number of seconds"
+
+busy="$(listener_pid "$MLX_PORT")"
+[[ -z "$busy" ]] \
+  || die "port $MLX_PORT is in use by $(ps -p "$busy" -o comm= || echo "an unknown program") (pid $busy). ./bin/verify starts its own server; stop that one first."
+
+label="$preset-$(date +%Y%m%d-%H%M%S)"
+dir="$PUNY_ROOT/state/verify/$label"
+mkdir -p "$dir"
+echo "Verifying $preset ($QWEN_REPO at $QWEN_REVISION); the report goes to $dir/report.md"
+
+# Downloads in the foreground, so its progress shows and its errors stop here.
+ensure_model "$QWEN_REPO" "$QWEN_REVISION"
+
+server_pid=""
+stop_server() {
+  [[ -n "$server_pid" ]] || return 0
+  if kill -0 "$server_pid" 2>/dev/null; then
+    echo "Stopping the server (pid $server_pid)"
+    kill -TERM "$server_pid" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$server_pid" 2>/dev/null && [[ $waited -lt 30 ]]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$server_pid" 2>/dev/null; then
+      echo "The server did not stop within 30s; killing it"
+      kill -KILL "$server_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$server_pid" 2>/dev/null || true
+  server_pid=""
+}
+trap stop_server EXIT
+trap 'exit 130' INT TERM
+
+echo "Starting the server; its log is $dir/serve.log"
+"$PUNY_ROOT/bin/serve-qwen" > "$dir/serve.log" 2>&1 &
+server_pid=$!
+# bin/serve-qwen becomes lib/serve.py, which records its own pid once its
+# memory check passes; the server is ready when that pid listens on the port.
+record="$(served_record)"
+started=$SECONDS
+until [[ -f "$record" && "$(cut -d' ' -f1 < "$record")" == "$server_pid" && "$(listener_pid "$MLX_PORT")" == "$server_pid" ]]; do
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    wait "$server_pid" 2>/dev/null || true
+    server_pid=""
+    tail -n 30 "$dir/serve.log" >&2
+    die "the server did not start; the end of $dir/serve.log is above"
+  fi
+  [[ $((SECONDS - started)) -lt $VERIFY_START_TIMEOUT ]] \
+    || die "the server did not answer within ${VERIFY_START_TIMEOUT}s; see $dir/serve.log"
+  sleep 2
+done
+echo "The server is up after $((SECONDS - started))s"
+
+# run_step NAME COMMAND... runs one step with its output in DIR/NAME.log and
+# records how it ended; a failed step does not stop the others. It returns 1
+# when the server has stopped, which leaves nothing for the next steps.
+outcomes=()
+server_lost=""
+run_step() {
+  local name="$1" status=0 begun=$SECONDS
+  shift
+  echo "== $name"
+  # No input, so no agent waits on the terminal; codex exec reads stdin.
+  "$@" < /dev/null 2>&1 | tee "$dir/$name.log" || status=$?
+  if [[ $status -eq 0 ]]; then
+    outcomes+=("$name|finished|$((SECONDS - begun))")
+  else
+    outcomes+=("$name|failed with status $status|$((SECONDS - begun))")
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    server_lost="$name"
+    echo "The server stopped during $name; see $dir/serve.log" >&2
+    return 1
+  fi
+}
+
+for step in "${steps[@]}"; do
+  case "$step" in
+    smoke) run_step smoke "$PUNY_ROOT/bin/smoke-test" "${agents[@]}" || break ;;
+    evals) run_step evals "$PUNY_ROOT/bin/evals" "$label" || break ;;
+    bench) BENCH_AGENTS="${agents[*]}" run_step bench "$PUNY_ROOT/bin/bench-agents" "$label" || break ;;
+  esac
+done
+stop_server
+
+echo "Writing $dir/report.md"
+{
+  echo "# $preset on $(sysctl -n machdep.cpu.brand_string), $(($(sysctl -n hw.memsize) / 1073741824)) GiB"
+  echo
+  echo "Run of \`./bin/verify\` from $(date '+%Y-%m-%d %H:%M %Z'), at commit \`$(git -C "$PUNY_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)\`$(git -C "$PUNY_ROOT" diff --quiet HEAD 2>/dev/null || echo ' with local changes')."
+  echo
+  echo "## Machine and versions"
+  echo
+  echo "- macOS $(sw_vers -productVersion), $(uname -m)"
+  # The server's memory check prints the limit macOS reports for the GPU.
+  echo "- GPU limit (max_recommended_working_set_size): $(awk '/GPU limit;/ { print $1, $2; exit }' "$dir/serve.log")"
+  echo "- Model: \`$QWEN_REPO\` at \`$QWEN_REVISION\`"
+  echo "- Settings: context $QWEN_CONTEXT tokens, $QWEN_KV_BITS-bit context cache, temperature $QWEN_TEMP, at most $QWEN_MAX_OUTPUT tokens per reply"
+  echo "- mlx-lm environment: \`$(mlx_env_stamp)\`"
+  for agent in "${agents[@]}"; do
+    if [[ "$agent" == codex ]]; then
+      echo "- codex: $(codex --version 2>/dev/null | head -n 1)"
+    else
+      echo "- $agent: $(installed_version "$agent")"
+    fi
+  done
+  echo
+  echo "## Steps"
+  if [[ -n "$server_lost" ]]; then
+    echo
+    echo "**The server stopped during $server_lost**, so the steps after it did not run. The end of its log:"
+    echo
+    echo '```'
+    tail -n 20 "$dir/serve.log"
+    echo '```'
+  fi
+  echo
+  echo "A step that finished ran to its end; how the model did is in the sections below."
+  echo
+  echo "| Step | Result | Seconds |"
+  echo "|---|---|---|"
+  for outcome in "${outcomes[@]}"; do
+    IFS='|' read -r name result seconds <<< "$outcome"
+    echo "| $name | $result | $seconds |"
+  done
+  echo
+  echo "## Memory"
+  echo
+  echo "The server's start-up check:"
+  echo
+  echo '```'
+  sed -n '/^Memory check:/,/free disk$/p' "$dir/serve.log"
+  grep '^note: ' "$dir/serve.log" || true
+  echo '```'
+  echo
+  python3 -I "$PUNY_ROOT/lib/verify.py" peaks "$dir/serve.log"
+  if [[ " ${steps[*]} " == *" evals "* && -f "$PUNY_ROOT/state/evals/$label/results.jsonl" ]]; then
+    echo
+    echo "## Evals"
+    echo
+    echo '```'
+    python3 -I "$PUNY_ROOT/lib/evals.py" report "$PUNY_ROOT/state/evals/$label/results.jsonl"
+    echo '```'
+  fi
+  if [[ " ${steps[*]} " == *" bench "* && -f "$PUNY_ROOT/state/bench/$label/results.tsv" ]]; then
+    echo
+    echo "## Agent benchmark"
+    echo
+    echo '```'
+    "$PUNY_ROOT/bin/bench-agents" report "$label"
+    echo '```'
+  fi
+} > "$dir/report.md"
+
+echo
+cat "$dir/report.md"
+echo
+echo "The report is $dir/report.md; the server log and each step's output are next to it."
+[[ -z "$server_lost" ]] || die "the server stopped during $server_lost; see the report"
+[[ ${#outcomes[@]} -eq ${#steps[@]} ]] || die "not every step ran; see the report"
+for outcome in "${outcomes[@]}"; do
+  [[ "$outcome" == *"|finished|"* ]] || die "not every step finished; see the report"
+done

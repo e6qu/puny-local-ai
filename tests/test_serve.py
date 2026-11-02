@@ -174,6 +174,66 @@ class RequestGuardTest(Patched):
             self.request(200000)
 
 
+class MeasureTest(unittest.TestCase):
+    """measure_requests logs each request's peak beside the estimate it was admitted on."""
+
+    def setUp(self):
+        self.peak = 0
+        self.resets = 0
+        patches = {
+            (serve.server.ResponseGenerator, "_serve_single"): lambda generator, request, stream: self.serve(generator),
+            (serve.mx, "get_active_memory"): lambda: WEIGHTS,
+            (serve.mx, "get_peak_memory"): lambda: self.peak,
+            (serve.mx, "reset_peak_memory"): self.reset,
+        }
+        for (owner, name), value in patches.items():
+            self.addCleanup(setattr, owner, name, getattr(owner, name))
+            setattr(owner, name, value)
+        serve.measure_requests()
+        self.estimate = memory.request_bytes(KAT, 9192, 512, 8)
+
+    def reset(self):
+        self.resets += 1
+
+    def serve(self, generator):
+        if self.admit:
+            generator.puny_admitted = (9192, 512, self.estimate)
+        self.peak = WEIGHTS + self.used
+        if self.fail:
+            raise RuntimeError("generation failed")
+        return "served"
+
+    def run_request(self, used, admit=True, fail=False):
+        self.used, self.admit, self.fail = used, admit, fail
+        generator = types.SimpleNamespace()
+        with self.assertLogs(level="INFO") as logs:
+            serve.logging.info("start")
+            try:
+                serve.server.ResponseGenerator._serve_single(generator, ("queue", "request", "args"), None)
+            except RuntimeError:
+                pass
+        return logs.output[1:]
+
+    def test_within_the_estimate(self):
+        lines = self.run_request(self.estimate // 2)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("INFO:root:Peak "), lines)
+        self.assertIn("for 9192 tokens at prefill step 512; estimated " + memory.gib(self.estimate), lines[0])
+        self.assertEqual(self.resets, 1)
+
+    def test_over_the_estimate_is_a_warning(self):
+        lines = self.run_request(self.estimate + 1)
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("WARNING:root:Peak "), lines)
+        self.assertIn("Over the estimate", lines[0])
+
+    def test_a_failed_generation_is_still_measured(self):
+        self.assertEqual(len(self.run_request(1, fail=True)), 1)
+
+    def test_a_request_the_guard_refused_logs_nothing(self):
+        self.assertEqual(self.run_request(1, admit=False), [])
+
+
 class ModelGuardTest(unittest.TestCase):
     def setUp(self):
         self.original = serve.server.ModelProvider.load
@@ -424,6 +484,7 @@ class MainTest(Patched):
         patches = {
             (serve.server, "main"): lambda: setattr(self, "handed", list(sys.argv)),
             (serve.server.ResponseGenerator, "_tokenize"): serve.server.ResponseGenerator._tokenize,
+            (serve.server.ResponseGenerator, "_serve_single"): serve.server.ResponseGenerator._serve_single,
             (serve.server.ModelProvider, "load"): serve.server.ModelProvider.load,
             (serve.server.APIHandler, "do_POST"): serve.server.APIHandler.do_POST,
             (serve.server.APIHandler, "do_GET"): serve.server.APIHandler.do_GET,
@@ -460,6 +521,7 @@ class MainTest(Patched):
 
     def test_wiring(self):
         tokenize, load = serve.server.ResponseGenerator._tokenize, serve.server.ModelProvider.load
+        serve_single = serve.server.ResponseGenerator._serve_single
         do_post, do_get = serve.server.APIHandler.do_POST, serve.server.APIHandler.do_GET
         quantize = serve.generate.maybe_quantize_kv_cache
         code, err = self.run_main()
@@ -472,6 +534,7 @@ class MainTest(Patched):
         self.assertEqual(self.cache_limits, [memory.MLX_CACHE_LIMIT_BYTES])
         self.assertEqual(self.threads, [(serve.watch, True)])
         self.assertIsNot(serve.server.ResponseGenerator._tokenize, tokenize)
+        self.assertIsNot(serve.server.ResponseGenerator._serve_single, serve_single)
         self.assertIsNot(serve.server.ModelProvider.load, load)
         self.assertIsNot(serve.server.APIHandler.do_POST, do_post)
         self.assertIsNot(serve.server.APIHandler.do_GET, do_get)

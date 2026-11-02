@@ -145,6 +145,10 @@ class BenchAgentsTest(ServerCase):
         self.assertIn("a-label inventory  pi          1/1", result.stdout)
         self.assertIn("b       inventory  pi          0/1", result.stdout)
         self.assertIn("a-label: 1/1 passed", result.stdout)
+        only = self.box.run(["bin/bench-agents", "report", "b"], extra_env=self.env)
+        self.assertEqual(only.returncode, 0, only.stderr)
+        self.assertIn("b: 0/1 passed", only.stdout)
+        self.assertNotIn("a-label", only.stdout)
 
     def test_report_without_results(self):
         self.assertIn("no results", self.box.run(["bin/bench-agents", "report"], extra_env=self.env).stderr)
@@ -152,7 +156,11 @@ class BenchAgentsTest(ServerCase):
     def test_bad_settings(self):
         cases = [
             (["bin/bench-agents"], {}, "usage"),
-            (["bin/bench-agents", "bad label"], {}, "LABEL may contain only"),
+            (["bin/bench-agents", "bad label"], {}, "LABEL 'bad label' may contain only"),
+            (["bin/bench-agents", ".."], {}, "may not start with '.'"),
+            (["bin/bench-agents", "report", "../x"], {}, "LABEL '../x' may contain only"),
+            (["bin/bench-agents", "report", "nope"], {}, "no results for nope"),
+            (["bin/bench-agents", "a", "b"], {}, "usage"),
             (["bin/bench-agents", "x"], {"BENCH_RUNS": "0"}, "BENCH_RUNS"),
             (["bin/bench-agents", "x"], {"BENCH_TIMEOUT": "soon"}, "BENCH_TIMEOUT"),
             (["bin/bench-agents", "x"], {"BENCH_TASKS": "nope"}, "bench/nope/prompt.txt is missing"),

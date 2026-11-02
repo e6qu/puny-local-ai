@@ -26,6 +26,7 @@ You also need [ShellCheck](https://www.shellcheck.net) (`brew install shellcheck
 - `lib/memory.py`: the memory estimates and their measured constants. Measure again before changing a constant, and record how in its docstring.
 - `lib/sources.py`: Hugging Face and ModelScope: search, commits, file lists with hashes, and ModelScope downloads.
 - `lib/verify_model.py`: the model hash check, for either source.
+- `lib/verify.py`: sums up the server log for `./bin/verify`'s report: each request's memory peak against its estimate, refusals and watchdog stops. It reads the lines `lib/serve.py` logs, so change both together.
 - `lib/models.py`: `./bin/models search`, `info` and `list`, including the memory estimate for a model that is not downloaded.
 - `ui/`: the web UI, a Go program that uses only the standard library. `main.go` describes it; `handlers.go` holds the pages and actions, `server.go` the model server control, `jobs.go` the jobs, `templates/` the HTML (one file per page in `pages/`, the shared parts in `partials.html`), and `static/` the stylesheet and the one script. Pages may not use inline scripts or styles: the Content-Security-Policy forbids them. Every action goes through a `bin/` command, never around it.
 - `lib/webui.sh`: the pinned Go and HTMX, and how `ui/` is built into `state/web-ui/`.
