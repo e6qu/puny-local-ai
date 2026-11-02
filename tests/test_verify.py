@@ -197,6 +197,19 @@ class PeaksTest(unittest.TestCase):
         self.assertIn("- Highest peak: 1.70 GiB above the loaded model, for 40000 tokens", summary)
         self.assertIn("- Closest to its estimate: 1.70 of 2.00 GiB (85%)", summary)
         self.assertNotIn("admitted and", summary)
+        self.assertNotIn("Not measured", summary)
+
+    def test_names_the_request_left_unmeasured(self):
+        text = "\n".join([
+            "x - INFO - Admitted 820 tokens with prefill step 512; 4.48 GiB free",
+            LINE.format(level="INFO", peak="0.95", tokens=820, estimate="1.11"),
+            "x - INFO - Admitted 136576 tokens with prefill step 128; 5.14 GiB free",
+            "x - INFO - Prompt processing progress: 128384/128384",
+        ])
+        self.assertEqual(verify.unmeasured(text), [("136576", "128")])
+        summary = verify.peaks(text)
+        self.assertIn("- 2 requests admitted and 1 measured.", summary)
+        self.assertIn("- Not measured: a request of 136576 tokens at prefill step 128.", summary)
 
     def test_over_the_estimate(self):
         text = LINE.format(level="WARNING", peak="2.10", tokens=9192, estimate="1.80") + ". Over the estimate"
@@ -212,6 +225,7 @@ class PeaksTest(unittest.TestCase):
         ])
         summary = verify.peaks(text)
         self.assertIn("- 1 request admitted and 0 measured.", summary)
+        self.assertIn("- Not measured: a request of 9192 tokens at prefill step 512.", summary)
         self.assertIn("- 1 request refused. The first: a 300000-token request needs 9.00 GiB", summary)
         self.assertIn("- **The watchdog stopped the server:** stopping the server to keep macOS responsive", summary)
 

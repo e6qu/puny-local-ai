@@ -14,13 +14,28 @@ PEAK = re.compile(
     r" - (?P<level>INFO|WARNING) - Peak (?P<peak>[\d.]+) GiB above the loaded model for (?P<tokens>\d+) tokens "
     r"at prefill step (?P<step>\d+); estimated (?P<estimate>[\d.]+) GiB"
 )
-ADMITTED = re.compile(r" - INFO - Admitted \d+ tokens")
+ADMITTED = re.compile(r" - INFO - Admitted (?P<tokens>\d+) tokens with prefill step (?P<step>\d+)")
 REFUSED = re.compile(r" - WARNING - Refused a request: (.*)")
 STOPPED = re.compile(r"^error: stopping the server.*", re.MULTILINE)
 
 
 def requests(n):
     return f"{n} request" if n == 1 else f"{n} requests"
+
+
+def unmeasured(text):
+    """(tokens, step) of each admitted request with no peak line after it.
+
+    With a quantized context cache, mlx-lm serves one request at a time, so a
+    peak line belongs to the request admitted just before it.
+    """
+    pending = []
+    for line in text.splitlines():
+        if m := ADMITTED.search(line):
+            pending.append((m["tokens"], m["step"]))
+        elif PEAK.search(line) and pending:
+            pending.pop(0)
+    return pending
 
 
 def peaks(text):
@@ -54,6 +69,11 @@ def peaks(text):
     admitted = len(ADMITTED.findall(text))
     if admitted != len(found):
         lines.append(f"- {requests(admitted)} admitted and {len(found)} measured.")
+    for tokens, step in unmeasured(text):
+        lines.append(
+            f"- Not measured: a request of {tokens} tokens at prefill step {step}. A peak is logged when "
+            f"the reply ends, so this one was most likely still running when the server stopped."
+        )
     refused = REFUSED.findall(text)
     if refused:
         lines.append(f"- {requests(len(refused))} refused. The first: {refused[0]}")
