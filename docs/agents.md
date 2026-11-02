@@ -112,6 +112,7 @@ The entry goes in `models.json` in Pi's agent folder ([Pi's model docs](https://
 The entry is a profile, `puny.config.toml` in `~/.codex`, that Codex layers over your usual config when you run `codex -p puny`.
 
 - `wire_api = "responses"` is the only protocol Codex speaks; the server answers it at the same address as the other agents.
+- `apps = false` turns off ChatGPT's app connectors. They run on OpenAI's servers, and with a ChatGPT login Codex offers about a hundred of their tools, which makes each request five times longer for the local model to read ([`features/src/lib.rs` at 0.166.0](https://github.com/openai/codex/blob/593389380740f7b4762771573c447ccfdc59742f/codex-rs/features/src/lib.rs#L1623-L1627)). `./bin/codex-qwen` passes the same setting.
 - The provider id must not be a built-in one such as `openai`, `ollama` or `lmstudio`, because Codex ignores user entries that reuse those ids ([`lib.rs` at 0.163.0](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/model-provider-info/src/lib.rs#L694-L699)).
 
 ```toml
@@ -124,4 +125,7 @@ model_context_window = 262144
 name = "puny-local-ai"
 base_url = "http://127.0.0.1:8081/v1"
 wire_api = "responses"
+
+[features]
+apps = false
 ```

@@ -16,6 +16,9 @@ What is translated:
     function calls with one string argument, "input".
   - reasoning items become the reasoning_content of the next assistant
     message, which Qwen's chat template renders as thinking.
+  - an apply_patch call that the request did not offer, which a model
+    trained on Codex makes anyway, becomes an exec_command call running
+    `apply_patch <<'EOF'`, which Codex applies itself.
   - function and custom tools, and the tools in a namespace, such as an MCP
     server's, which the model sees as NAMESPACE__NAME. Tools that OpenAI runs
     on its own servers, such as web_search, cannot run here and are left out.
@@ -255,12 +258,59 @@ def usage_object(usage):
     }
 
 
+APPLY_PATCH_NAMES = ("apply_patch", "applypatch")
+
+
+def patch_text(arguments):
+    """The patch in an apply_patch call's arguments, or None if they hold none."""
+    try:
+        value = json.loads(arguments)
+    except ValueError:
+        value = arguments
+    if isinstance(value, dict):
+        texts = [v for v in value.values() if isinstance(v, str)]
+        value = value.get("input", value.get("patch", texts[0] if len(texts) == 1 else None))
+    if not (isinstance(value, str) and "*** Begin Patch" in value):
+        return None
+    # Codex wants the patch to start at its first line; a model may wrap it
+    # in a code fence or its own heredoc line.
+    value = value[value.index("*** Begin Patch"):]
+    end = value.find("*** End Patch")
+    return value[:end + len("*** End Patch")] + "\n" if end != -1 else value
+
+
+def offered_apply_patch_as_shell(name, arguments, kinds):
+    """exec_command arguments that apply the patch, for an apply_patch call the
+    request did not offer, or None.
+
+    Codex offers its apply_patch tool only to models in its catalog, not to
+    default_model, but a model trained on Codex calls it anyway; Codex then
+    answers "unsupported call" and the model loses a turn. Codex's
+    exec_command recognizes `apply_patch <<'EOF'` and applies the patch itself
+    (codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs, which calls
+    intercept_apply_patch, at rust-v0.166.0), so the call is sent in that form.
+    """
+    if name not in APPLY_PATCH_NAMES or name in kinds or kinds.get("exec_command", {}).get("kind") != "function":
+        return None
+    patch = patch_text(arguments)
+    if patch is None:
+        return None
+    delimiter = "PUNY_PATCH"
+    while delimiter in patch:
+        delimiter += "_"
+    logging.info("Responses API: sent an apply_patch call Codex had not offered as exec_command apply_patch")
+    return json.dumps({"cmd": f"apply_patch <<'{delimiter}'\n{patch.rstrip(chr(10))}\n{delimiter}"})
+
+
 def call_item(call, kinds):
     """A function_call item, or a custom_tool_call item for a freeform tool."""
     function = call.get("function") or {}
     name, arguments = function.get("name", ""), function.get("arguments") or "{}"
     if not isinstance(arguments, str):
         arguments = json.dumps(arguments)
+    shell_arguments = offered_apply_patch_as_shell(name, arguments, kinds)
+    if shell_arguments is not None:
+        name, arguments = "exec_command", shell_arguments
     call_id = call.get("id") or new_id("call")
     tool = kinds.get(name) or {"kind": "function", "name": name, "namespace": None}
     named = {"name": tool["name"], **({"namespace": tool["namespace"]} if tool["namespace"] else {})}

@@ -110,6 +110,7 @@ class CodexLauncherTest(ServerCase):
         self.assertIn(f'base_url="{self.server.base_url}"', call)
         self.assertIn('wire_api="responses"', call)
         self.assertIn("model_context_window=262144", call)
+        self.assertIn("features.apps=false", call)
         self.assertTrue(call.endswith("-m default_model exec hi"))
         self.assertFalse((self.box.home / ".codex").exists())
 

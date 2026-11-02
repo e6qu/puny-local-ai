@@ -133,6 +133,12 @@ def codex_profile(s):
         # same address as Chat Completions (lib/responses.py).
         + f"base_url = {json.dumps(s['base_url'])}\n"
         + 'wire_api = "responses"\n'
+        + "\n"
+        # ChatGPT's app connectors run on OpenAI's servers, and with a ChatGPT
+        # login Codex offers about a hundred of their tools, which multiplies
+        # the prompt the local model must read every turn (docs/compatibility.md).
+        + "[features]\n"
+        + "apps = false\n"
     )
 
 

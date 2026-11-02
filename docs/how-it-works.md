@@ -36,6 +36,7 @@ What the translation does with a request:
 What it does with the reply:
 
 - Reasoning, text and each tool call become output items, with the delta events Codex displays as they stream.
+- A call to `apply_patch` that Codex did not offer, which a model trained on Codex makes anyway, goes back as an `exec_command` call running `apply_patch <<'PUNY_PATCH'` with the patch. Codex recognizes that command and applies the patch itself ([`exec_command.rs` at 0.166.0](https://github.com/openai/codex/blob/593389380740f7b4762771573c447ccfdc59742f/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs), [`invocation.rs`](https://github.com/openai/codex/blob/593389380740f7b4762771573c447ccfdc59742f/codex-rs/apply-patch/src/invocation.rs#L133-L156)), so the model does not lose a turn to an "unsupported call" answer. The server logs each one. A call that holds no patch goes back unchanged.
 - The reply ends with `response.completed`, carrying the token usage, or `response.incomplete` when it hit `max_output_tokens`.
 - While mlx-lm reads a long prompt, it sends progress comments. These become `response.in_progress` events, so Codex's 300-second idle timer does not run out during a long prefill.
 - A refusal from the memory guards becomes an HTTP 400 error with the guard's message. A prompt over the context window gets the code `context_length_exceeded`, which OpenAI also uses for that case.

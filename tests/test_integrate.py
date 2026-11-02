@@ -448,6 +448,7 @@ class IntegrateTest(unittest.TestCase):
         self.assertIn('wire_api = "responses"', text)
         self.assertIn('model_provider = "puny"', text)
         self.assertIn("model_context_window = 262144", text)
+        self.assertIn("[features]\napps = false\n", text)
         self.assertIn("codex: installed", self.integrate("status", "codex").stdout)
         self.integrate("uninstall", "codex")
         self.assertEqual(self.home_files(), [])

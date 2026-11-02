@@ -152,6 +152,30 @@ class EventStreamTest(unittest.TestCase):
         self.assertEqual(completed["usage"]["input_tokens"], 30)
         self.assertEqual(completed["usage"]["output_tokens"], 7)
 
+    def test_an_apply_patch_codex_did_not_offer_goes_through_exec_command(self):
+        tools = [{"type": "function", "name": "exec_command", "description": "Runs a command.",
+                  "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
+        _, kinds = responses.to_chat({"input": "x", "tools": tools})
+        patch = "*** Begin Patch\n*** Update File: a.py\n@@\n-PUNY_PATCH = 1\n+x = 2\n*** End Patch\n"
+        for arguments in (json.dumps({"input": patch}), json.dumps({"patch": patch}), json.dumps({"diff": patch})):
+            with self.subTest(arguments):
+                item = responses.call_item({"id": "c9", "function": {"name": "apply_patch", "arguments": arguments}}, kinds)
+                self.assertEqual((item["type"], item["name"], item["call_id"]), ("function_call", "exec_command", "c9"))
+                cmd = json.loads(item["arguments"])["cmd"]
+                # The delimiter cannot be a line of the patch.
+                self.assertEqual(cmd, "apply_patch <<'PUNY_PATCH_'\n" + patch.rstrip("\n") + "\nPUNY_PATCH_")
+        wrapped = "apply_patch <<'EOF'\n" + patch + "EOF\n```"
+        item = responses.call_item({"id": "c", "function": {"name": "apply_patch", "arguments": json.dumps({"input": wrapped})}}, kinds)
+        self.assertEqual(json.loads(item["arguments"])["cmd"], "apply_patch <<'PUNY_PATCH_'\n" + patch.rstrip("\n") + "\nPUNY_PATCH_")
+        # Not a patch, no exec_command, or apply_patch offered: passed on as it is.
+        item = responses.call_item({"id": "c", "function": {"name": "apply_patch", "arguments": '{"input": "hello"}'}}, kinds)
+        self.assertEqual(item["name"], "apply_patch")
+        item = responses.call_item({"id": "c", "function": {"name": "apply_patch", "arguments": json.dumps({"input": patch})}}, {})
+        self.assertEqual(item["name"], "apply_patch")
+        _, offered = responses.to_chat({"input": "x", "tools": TOOLS + tools})
+        item = responses.call_item({"id": "c", "function": {"name": "apply_patch", "arguments": json.dumps({"input": patch})}}, offered)
+        self.assertEqual((item["type"], item["input"]), ("custom_tool_call", patch))
+
     def test_length_limit_is_incomplete(self):
         stream = responses.EventStream("m", {})
         stream.feed(delta(content="abc"))
